@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Adivina el Color - Juego Multijugador</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <!-- Pantalla de Inicio -->
+        <div id="home-screen" class="screen active">
+            <div class="home-container">
+                <header class="home-header">
+                    <h1>Adivina el Color</h1>
+                    <p class="subtitle">Juego multijugador en espacio CIELAB</p>
+                </header>
+
+                <main class="home-main">
+                    <div class="player-setup">
+                        <h2>Configura tu perfil</h2>
+                        
+                        <div class="avatar-selection">
+                            <label>Elige tu avatar</label>
+                            <div class="avatar-grid" id="avatar-grid">
+                                <!-- Avatares se generan dinámicamente -->
+                            </div>
+                        </div>
+
+                        <div class="name-input">
+                            <label for="player-name">Tu nombre</label>
+                            <input type="text" id="player-name" placeholder="Escribe tu nombre" maxlength="20" required>
+                        </div>
+                    </div>
+
+                    <div class="room-actions">
+                        <button id="create-room-btn" class="btn btn-primary btn-large">
+                            <span class="btn-icon">➕</span>
+                            Crear Sala
+                        </button>
+                        <div class="divider">o</div>
+                        <button id="join-room-btn" class="btn btn-secondary btn-large">
+                            <span class="btn-icon">🔗</span>
+                            Unirse a Sala
+                        </button>
+                    </div>
+                </main>
+            </div>
+        </div>
+
+        <!-- Modal para unirse a sala -->
+        <div id="join-modal" class="modal hidden">
+            <div class="modal-content">
+                <h3>Unirse a Sala</h3>
+                <p>Ingresa el código de invitación</p>
+                <input type="text" id="room-code-input" placeholder="Código de 6 caracteres" maxlength="6" style="text-transform: uppercase; letter-spacing: 2px;">
+                <div class="modal-actions">
+                    <button id="cancel-join-btn" class="btn btn-secondary">Cancelar</button>
+                    <button id="confirm-join-btn" class="btn btn-primary">Unirse</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pantalla de Espera (Host) -->
+        <div id="waiting-screen" class="screen hidden">
+            <div class="waiting-container">
+                <header class="waiting-header">
+                    <button id="settings-btn" class="icon-btn" title="Configuración">⚙️</button>
+                    <h1>Sala de Espera</h1>
+                    <div class="room-code-display">
+                        <span id="room-code">ABC123</span>
+                        <button id="copy-link-btn" class="icon-btn" title="Copiar enlace">📋</button>
+                    </div>
+                </header>
+
+                <main class="waiting-main">
+                    <!-- Espacio de publicidad -->
+                    <div class="ad-placeholder" id="ad-placeholder">
+                        publicidad aqui
+                    </div>
+
+                    <!-- Lista de jugadores conectados -->
+                    <div class="players-list" id="players-list">
+                        <!-- Los jugadores aparecen aquí dinámicamente -->
+                    </div>
+                </main>
+
+                <footer class="waiting-footer">
+                    <button id="start-game-btn" class="btn btn-primary btn-large" disabled>
+                        <span class="btn-icon">🎮</span>
+                        Iniciar Partida
+                    </button>
+                    <p class="min-players-msg">Se necesitan al menos 2 jugadores</p>
+                </footer>
+            </div>
+        </div>
+
+        <!-- Pantalla de Espera (Invitado) -->
+        <div id="guest-waiting-screen" class="screen hidden">
+            <div class="guest-waiting-container">
+                <header class="guest-waiting-header">
+                    <h1>Esperando al anfitrión</h1>
+                </header>
+                <main class="guest-waiting-main">
+                    <div class="waiting-animation">
+                        <div class="spinner"></div>
+                        <p>El anfitrión está configurando la partida...</p>
+                    </div>
+                </main>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
