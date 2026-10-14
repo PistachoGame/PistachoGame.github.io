@@ -2118,24 +2118,20 @@ function startRound() {
     gameElements.roundInfo.textContent = `Ronda ${gameState.currentRound} / ${gameState.totalRounds}`;
     gameElements.endTurnBtn.disabled = false;
     
-    // Select figure for this round
-    selectFigureForRound();
-    
-    // Broadcast figure data to all players so they can load the image
-    if (gameState.player.isHost && gameState.currentFigure) {
-        broadcast('figure-data', {
-            round: gameState.currentRound,
-            figure: {
-                id: gameState.currentFigure.id,
-                name: gameState.currentFigure.name,
-                original: gameState.currentFigure.original,
-                mask: gameState.currentFigure.mask,
-                targetColor: gameState.currentFigure.targetColor
-            }
-        });
+    // 1. Seleccionar figura (Solo el host decide qué figura toca en esta ronda)
+    if (gameState.player.isHost) {
+        selectFigureForRound();
+        
+        // 2. Broadcast de la figura elegida a TODOS los invitados
+        if (gameState.currentFigure) {
+            broadcast('figure-data', {
+                round: gameState.currentRound,
+                figure: gameState.currentFigure
+            });
+        }
     }
     
-    // Draw figure with mask
+    // Dibujar la figura en el canvas local
     drawFigureWithMask();
     
     // Reset player knobs
@@ -2170,49 +2166,48 @@ function selectFigureForRound() {
 }
 
 function drawFigureWithMask() {
-    if (!gameState.currentFigure) return;
+    if (!gameState.currentFigure) {
+        addDebug('⚠️ No hay figura actual para dibujar en el canvas');
+        return;
+    }
     
     const canvas = gameElements.canvas;
     const ctx = canvas.getContext('2d');
-    const img = new Image();
     const figure = gameState.currentFigure;
     
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
     img.onload = () => {
-        // Canvas size 600x500
         canvas.width = 600;
         canvas.height = 500;
         
-        // Draw original image (cover)
+        // Escalar manteniendo proporciones (cover)
         const scale = Math.max(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight);
         const drawW = Math.round(img.naturalWidth * scale);
         const drawH = Math.round(img.naturalHeight * scale);
         const drawX = Math.round((canvas.width - drawW) / 2);
         const drawY = Math.round((canvas.height - drawH) / 2);
         
+        // Limpiar canvas y dibujar imagen original
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, drawX, drawY, drawW, drawH);
         
-        // Apply mask: white overlay where mask is white (target color area)
-        // The mask has white where the target color was detected
-        const maskImg = new Image();
-        maskImg.onload = () => {
-            // Create temporary canvas for the white overlay with mask alpha
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = canvas.width;
-            tempCanvas.height = canvas.height;
-            const tempCtx = tempCanvas.getContext('2d');
-            
-            // Fill with white
-            tempCtx.fillStyle = '#FFFFFF';
-            tempCtx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Apply mask as alpha: destination-in keeps white only where mask is opaque
-            tempCtx.globalCompositeOperation = 'destination-in';
-            tempCtx.drawImage(maskImg, drawX, drawY, drawW, drawH);
-            
-            // Draw white masked overlay over original image
-            ctx.drawImage(tempCanvas, 0, 0);
-        };
-        maskImg.src = figure.mask;
+        // Cargar máscara guardada
+        if (figure.mask) {
+            const maskImg = new Image();
+            maskImg.crossOrigin = 'anonymous';
+            maskImg.onload = () => {
+                // Dibujar la máscara encima con opacidad o mezcla para que se distinga la zona a adivinar
+                ctx.save();
+                ctx.globalAlpha = 0.85; // Ajusta la opacidad para que se vea la máscara sin cegar la pantalla
+                ctx.drawImage(maskImg, drawX, drawY, drawW, drawH);
+                ctx.restore();
+            };
+            maskImg.src = figure.mask;
+        }
+    };
+    img.onerror = () => {
+        addDebug('❌ Error al cargar la imagen original de la figura');
     };
     img.src = figure.original;
 }
@@ -2557,12 +2552,18 @@ function handleGameMessage(from, data) {
 }
 
 function handleFigureData(data) {
-    // Receive figure data from host and load it
     if (data.figure) {
         gameState.currentFigure = data.figure;
-        gameState.targetLab = data.figure.targetColor;
-        gameElements.figureLabel.textContent = data.figure.name || 'Figura';
+        gameState.targetLab = data.figure.targetColor.lab; // Asegurar que apunte al lab correcto
+        
+        // Actualizar el título/etiqueta con el nombre de la figura para el invitado
+        if (gameElements.figureLabel) {
+            gameElements.figureLabel.textContent = data.figure.name || 'Figura';
+        }
+        
+        // Dibujar la imagen recibida en el canvas del invitado
         drawFigureWithMask();
+        addDebug(`🖼️ Figura recibida y cargada: ${data.figure.name}`);
     }
 }
 
