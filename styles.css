@@ -73,6 +73,26 @@ body {
 }
 .avatar-option:hover { transform: scale(1.05); box-shadow: var(--shadow-md); }
 .avatar-option.selected { border-color: var(--primary-color); box-shadow: 0 0 0 3px var(--primary-light); }
+
+/* Botón de emoji personalizado */
+.avatar-custom-btn {
+    background: var(--primary-light);
+    border: 2px dashed var(--primary-color);
+    font-size: 1.5rem;
+    color: var(--primary-color);
+}
+.avatar-custom-btn:hover {
+    background: var(--primary-color);
+    color: white;
+    border-style: solid;
+    transform: scale(1.05);
+}
+.custom-avatar-plus {
+    font-size: 2rem;
+    font-weight: 300;
+    line-height: 1;
+}
+
 .name-input label { display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.5rem; }
 .name-input input {
     width: 100%; padding: 0.875rem 1rem; border: 2px solid var(--border-color);
@@ -93,6 +113,7 @@ body {
 .btn-secondary { background: var(--surface); color: var(--text-primary); border: 2px solid var(--border-color); }
 .btn-secondary:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--text-muted); }
 .btn-large { width: 100%; padding: 1rem 1.5rem; font-size: 1.125rem; }
+.btn-small { width: 100%; padding: 0.6rem 1rem; font-size: 0.8rem; font-weight: 500; }
 .icon-btn { background: none; border: none; cursor: pointer; padding: 0.5rem; border-radius: var(--radius-sm); font-size: 1.25rem; transition: var(--transition); }
 .icon-btn:hover { background: var(--surface-hover); }
 .room-actions { display: flex; flex-direction: column; gap: 1rem; }
