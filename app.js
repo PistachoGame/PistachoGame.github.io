@@ -20,7 +20,27 @@ const gameState = {
     room: { code: null, hostId: null, players: new Map() },
     currentScreen: 'home',
     inviteHostId: null,
-    debugInfo: []
+    debugInfo: [],
+    // Propiedades de la partida y el juego
+    currentFigure: null,
+    currentRound: 0,
+    totalRounds: 0,
+    roundDuration: 0,
+    timeRemaining: 0,
+    timerInterval: null,
+    countdownInterval: null,
+    playerLab: { L: 50, a: 0, b: 0 },
+    targetLab: { L: 50, a: 0, b: 0 },
+    roundActive: false,
+    turnEnded: false,
+    scores: {},
+    roundResults: [],
+    allFigures: [],
+    isGyroActive: false,
+    gyroAlpha: 0,
+    gyroBeta: 0,
+    gyroGamma: 0,
+    gyroPermissionGranted: false
 };
 
 const elements = {};
@@ -508,6 +528,14 @@ function connectToHost(hostId) {
 
 function handlePeerMessage(from, data) {
     addDebug(`📨 ${from.substring(0,8)}: ${data.type}`);
+    
+    // Game messages
+    const gameTypes = ['player-lab', 'start-round', 'end-round', 'game-ended'];
+    if (gameTypes.includes(data.type)) {
+        handleGameMessage(from, data);
+        return;
+    }
+    
     switch (data.type) {
         case 'room-info': handleRoomInfo(data); break;
         case 'player-joined': handlePlayerJoined(data); break;
@@ -983,7 +1011,7 @@ function handleStartGame() {
     });
     
     addDebug('🚀 Iniciando partida con config:', gameState.room.config);
-    alert('¡Partida iniciada! Config enviada a todos. Próximamente: pantalla de juego');
+    startGame();
 }
 
 function handleStartGameSignal(data) {
@@ -994,7 +1022,8 @@ function handleStartGameSignal(data) {
     gameState.room.totalRounds = data.totalRounds;
     gameState.room.baseDuration = data.baseDuration;
     
-    alert('¡Partida iniciada! Config recibida. Próximamente: pantalla de juego');
+    // Start the game screen
+    startGame();
 }
 
 // Exponer para pantalla de juego
@@ -1788,3 +1817,631 @@ window.figuresAPI = {
 // Integrar botón en waiting-host-screen (se hace en setupEventListeners principal)
 // Agregar al setupEventListeners existente:
 // elements.figuresBtn?.addEventListener('click', openFiguresScreen);
+
+// ========================================
+// PANTALLA DE JUEGO
+// ========================================
+
+const gameElements = {};
+
+function cacheGameElements() {
+    gameElements.exitBtn = document.getElementById('game-exit-btn');
+    gameElements.timer = document.getElementById('game-timer');
+    gameElements.roundInfo = document.getElementById('game-round-info');
+    gameElements.countdownOverlay = document.getElementById('countdown-overlay');
+    gameElements.countdownNumber = document.getElementById('countdown-number');
+    gameElements.canvas = document.getElementById('game-canvas');
+    gameElements.figureLabel = document.getElementById('figure-label');
+    
+    // Knobs
+    gameElements.knobL = { 
+        canvas: document.getElementById('knob-l-canvas'),
+        input: document.getElementById('knob-l-input'),
+        value: document.getElementById('knob-l-value')
+    };
+    gameElements.knobA = { 
+        canvas: document.getElementById('knob-a-canvas'),
+        input: document.getElementById('knob-a-input'),
+        value: document.getElementById('knob-a-value')
+    };
+    gameElements.knobB = { 
+        canvas: document.getElementById('knob-b-canvas'),
+        input: document.getElementById('knob-b-input'),
+        value: document.getElementById('knob-b-value')
+    };
+    
+    gameElements.endTurnBtn = document.getElementById('game-end-turn-btn');
+    
+    // Results
+    gameElements.roundResultsOverlay = document.getElementById('round-results-overlay');
+    gameElements.resultsRoundNum = document.getElementById('results-round-num');
+    gameElements.resultsList = document.getElementById('results-list');
+    gameElements.resultsTotal = document.getElementById('results-total');
+    gameElements.nextRoundBtn = document.getElementById('next-round-btn');
+    
+    gameElements.gameEndOverlay = document.getElementById('game-end-overlay');
+    gameElements.finalScores = document.getElementById('final-scores');
+    gameElements.winnerAnnouncement = document.getElementById('winner-announcement');
+    gameElements.backToHomeBtn = document.getElementById('back-to-home-btn');
+}
+
+function setupGameListeners() {
+    gameElements.exitBtn.addEventListener('click', handleGameExit);
+    gameElements.endTurnBtn.addEventListener('click', handleEndTurn);
+    gameElements.nextRoundBtn.addEventListener('click', handleNextRound);
+    gameElements.backToHomeBtn.addEventListener('click', () => showScreen('home-screen'));
+    
+    // Knob listeners
+    setupKnob(gameElements.knobL, 'L');
+    setupKnob(gameElements.knobA, 'a');
+    setupKnob(gameElements.knobB, 'b');
+}
+
+function setupKnob(k, axis) {
+    const canvas = k.canvas;
+    const ctx = canvas.getContext('2d');
+    let isDragging = false;
+    let startAngle = 0;
+    let startValue = 0;
+    
+    const ranges = {
+        L: { min: 0, max: 100, initial: 50 },
+        a: { min: -128, max: 127, initial: 0 },
+        b: { min: -128, max: 127, initial: 0 }
+    };
+    
+    const range = ranges[axis];
+    let currentValue = range.initial;
+    
+    // Draw knob
+    function drawKnob(value) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const radius = Math.min(centerX, centerY) - 10;
+        
+        // Background circle
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.fillStyle = '#1e293b';
+        ctx.fill();
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        
+        // Value arc
+        const normalized = (value - range.min) / (range.max - range.min);
+        const startAngle = -Math.PI / 2;
+        const endAngle = startAngle + (normalized * Math.PI * 2);
+        
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius - 4, startAngle, endAngle);
+        ctx.strokeStyle = axis === 'L' ? '#6366f1' : (axis === 'a' ? '#ef4444' : '#eab308');
+        ctx.lineWidth = 8;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        
+        // Center dot
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, 8, 0, Math.PI * 2);
+        ctx.fillStyle = axis === 'L' ? '#6366f1' : (axis === 'a' ? '#ef4444' : '#eab308');
+        ctx.fill();
+        
+        // Marker line
+        const markerAngle = startAngle + (normalized * Math.PI * 2);
+        const markerX = centerX + Math.cos(markerAngle) * (radius - 12);
+        const markerY = centerY + Math.sin(markerAngle) * (radius - 12);
+        const markerX2 = centerX + Math.cos(markerAngle) * (radius + 4);
+        const markerY2 = centerY + Math.sin(markerAngle) * (radius + 4);
+        
+        ctx.beginPath();
+        ctx.moveTo(markerX, markerY);
+        ctx.lineTo(markerX2, markerY2);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+    }
+    
+    function valueToAngle(value) {
+        const normalized = (value - range.min) / (range.max - range.min);
+        return -Math.PI / 2 + (normalized * Math.PI * 2);
+    }
+    
+    function angleToValue(angle) {
+        let normalized = (angle + Math.PI / 2) / (Math.PI * 2);
+        normalized = Math.max(0, Math.min(1, normalized));
+        return Math.round((range.min + normalized * (range.max - range.min)) * 2) / 2;
+    }
+    
+    function handleDown(e) {
+        if (!gameState.roundActive || gameState.turnEnded) return;
+        isDragging = true;
+        const rect = canvas.getBoundingClientRect();
+        const centerX = rect.left + canvas.width / 2;
+        const centerY = rect.top + canvas.height / 2;
+        startAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
+        startValue = currentValue;
+        canvas.style.cursor = 'grabbing';
+    }
+    
+    function handleMove(e) {
+        if (!isDragging) return;
+        const rect = canvas.getBoundingClientRect();
+        const centerX = rect.left + canvas.width / 2;
+        const centerY = rect.top + canvas.height / 2;
+        const currentAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
+        let deltaAngle = currentAngle - startAngle;
+        
+        // Normalize delta angle
+        while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
+        while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
+        
+        const newValue = startValue + (deltaAngle / (Math.PI * 2)) * (range.max - range.min);
+        currentValue = Math.max(range.min, Math.min(range.max, newValue));
+        currentValue = Math.round(currentValue * 2) / 2; // step 0.5
+        
+        updateKnobValue(axis, currentValue);
+        drawKnob(currentValue);
+    }
+    
+    function handleUp() {
+        isDragging = false;
+        canvas.style.cursor = 'grab';
+    }
+    
+    canvas.addEventListener('mousedown', handleDown);
+    canvas.addEventListener('touchstart', (e) => handleDown(e.touches[0]), { passive: true });
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('touchmove', (e) => handleMove(e.touches[0]), { passive: true });
+    window.addEventListener('mouseup', handleUp);
+    window.addEventListener('touchend', handleUp);
+    
+    // Also sync with hidden input
+    k.input.addEventListener('input', () => {
+        currentValue = parseFloat(k.input.value);
+        updateKnobValue(axis, currentValue);
+        drawKnob(currentValue);
+    });
+    
+    // Initial draw
+    drawKnob(currentValue);
+    k.value.textContent = currentValue;
+    
+    // Store reference
+    k._draw = drawKnob;
+    k._setValue = (v) => {
+        currentValue = v;
+        drawKnob(currentValue);
+        k.value.textContent = currentValue;
+        k.input.value = currentValue;
+    };
+    k._getValue = () => currentValue;
+}
+
+function updateKnobValue(axis, value) {
+    if (axis === 'L') gameState.playerLab.L = value;
+    else if (axis === 'a') gameState.playerLab.a = value;
+    else if (axis === 'b') gameState.playerLab.b = value;
+}
+
+function initGameScreen() {
+    cacheGameElements();
+    setupGameListeners();
+    resetGameState();
+}
+
+function resetGameState() {
+    gameState.currentRound = 0;
+    gameState.totalRounds = gameState.room.totalRounds || 5;
+    gameState.roundDuration = gameState.room.baseDuration || 10;
+    gameState.timeRemaining = gameState.roundDuration;
+    gameState.playerLab = { L: 50, a: 0, b: 0 };
+    gameState.targetLab = { L: 50, a: 0, b: 0 };
+    gameState.roundActive = false;
+    gameState.turnEnded = false;
+    gameState.scores = {};
+    gameState.roundResults = [];
+    gameState.isGyroActive = false;
+    
+    // Initialize scores for all players
+    gameState.room.players.forEach((p, id) => {
+        gameState.scores[id] = { roundScores: [], total: 0 };
+    });
+    
+    // Reset knobs
+    if (gameElements.knobL._setValue) gameElements.knobL._setValue(50);
+    if (gameElements.knobA._setValue) gameElements.knobA._setValue(0);
+    if (gameElements.knobB._setValue) gameElements.knobB._setValue(0);
+    gameState.playerLab = { L: 50, a: 0, b: 0 };
+}
+
+async function startGame() {
+    initGameScreen();
+    showScreen('game-screen');
+    
+    // Load all figures (preloaded + local)
+    await loadAllFigures();
+    
+    // Start countdown
+    await runCountdown();
+    
+    // Start first round
+    startRound();
+}
+
+async function loadAllFigures() {
+    const preloaded = window.figuresAPI?.getFigures() || [];
+    const localFigures = figuresState.figures || [];
+    gameState.allFigures = [...preloaded, ...localFigures];
+    addDebug(`🎮 Figuras disponibles: ${gameState.allFigures.length}`);
+}
+
+async function runCountdown() {
+    gameElements.countdownOverlay.classList.remove('hidden');
+    
+    for (let i = 3; i >= 1; i--) {
+        gameElements.countdownNumber.textContent = i;
+        await sleep(1000);
+    }
+    
+    gameElements.countdownOverlay.classList.add('hidden');
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function startRound() {
+    gameState.currentRound++;
+    gameState.roundActive = true;
+    gameState.turnEnded = false;
+    gameState.timeRemaining = getRoundDuration(gameState.currentRound);
+    
+    // Update UI
+    gameElements.roundInfo.textContent = `Ronda ${gameState.currentRound} / ${gameState.totalRounds}`;
+    gameElements.endTurnBtn.disabled = false;
+    
+    // Select figure for this round
+    selectFigureForRound();
+    
+    // Draw figure with mask
+    drawFigureWithMask();
+    
+    // Reset player knobs
+    gameState.playerLab = { L: 50, a: 0, b: 0 };
+    if (gameElements.knobL._setValue) gameElements.knobL._setValue(50);
+    if (gameElements.knobA._setValue) gameElements.knobA._setValue(0);
+    if (gameElements.knobB._setValue) gameElements.knobB._setValue(0);
+    
+    // Start timer
+    startTimer();
+    
+    addDebug(`🎮 Ronda ${gameState.currentRound} iniciada - ${gameState.timeRemaining}s`);
+}
+
+function getRoundDuration(roundNum) {
+    if (gameState.room.roundDurations && gameState.room.roundDurations[roundNum - 1]) {
+        return gameState.room.roundDurations[roundNum - 1].duration;
+    }
+    return gameState.roundDuration;
+}
+
+function selectFigureForRound() {
+    if (gameState.allFigures.length === 0) return;
+    
+    // Use selected figure if exists, otherwise random
+    let figure = gameState.room.selectedFigure || gameState.allFigures[Math.floor(Math.random() * gameState.allFigures.length)];
+    gameState.currentFigure = figure;
+    gameState.targetLab = figure.targetColor.lab;
+    
+    // Update label
+    gameElements.figureLabel.textContent = figure.name || 'Figura';
+}
+
+function drawFigureWithMask() {
+    if (!gameState.currentFigure) return;
+    
+    const canvas = gameElements.canvas;
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    
+    img.onload = () => {
+        // Canvas size 600x500
+        canvas.width = 600;
+        canvas.height = 500;
+        
+        // Draw original image (cover)
+        const scale = Math.max(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight);
+        const drawW = Math.round(img.naturalWidth * scale);
+        const drawH = Math.round(img.naturalHeight * scale);
+        const drawX = Math.round((canvas.width - drawW) / 2);
+        const drawY = Math.round((canvas.height - drawH) / 2);
+        
+        ctx.drawImage(img, drawX, drawY, drawW, drawH);
+        
+        // Apply mask (white overlay on masked areas)
+        // The mask is stored as dataURL with white areas
+        const maskImg = new Image();
+        maskImg.onload = () => {
+            ctx.globalCompositeOperation = 'source-atop';
+            ctx.drawImage(maskImg, drawX, drawY, drawW, drawH);
+            ctx.globalCompositeOperation = 'source-over';
+        };
+        maskImg.src = figure.mask;
+    };
+    img.src = gameState.currentFigure.original;
+}
+
+function startTimer() {
+    updateTimerDisplay();
+    gameState.timerInterval = setInterval(() => {
+        gameState.timeRemaining--;
+        updateTimerDisplay();
+        
+        if (gameState.timeRemaining <= 0) {
+            endRound();
+        }
+    }, 1000);
+}
+
+function updateTimerDisplay() {
+    const mins = Math.floor(gameState.timeRemaining / 60);
+    const secs = gameState.timeRemaining % 60;
+    gameElements.timer.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    
+    // Warning colors
+    gameElements.timer.classList.remove('warning', 'danger');
+    if (gameState.timeRemaining <= 5) gameElements.timer.classList.add('danger');
+    else if (gameState.timeRemaining <= 10) gameElements.timer.classList.add('warning');
+}
+
+function handleEndTurn() {
+    if (!gameState.roundActive || gameState.turnEnded) return;
+    gameState.turnEnded = true;
+    gameElements.endTurnBtn.disabled = true;
+    
+    // Send player's lab to host
+    sendPlayerLab();
+    
+    // Calculate score locally for immediate feedback
+    const score = calculateDeltaE(gameState.playerLab, gameState.targetLab);
+    addDebug(`✅ Turno terminado - Similitud: ${score}%`);
+}
+
+function sendPlayerLab() {
+    const data = {
+        type: 'player-lab',
+        playerId: gameState.player.id,
+        lab: gameState.playerLab,
+        round: gameState.currentRound
+    };
+    
+    if (gameState.player.isHost) {
+        handlePlayerLab(data);
+    } else {
+        // Send to host
+        const hostConn = gameState.connections.get(gameState.room.hostId);
+        if (hostConn && hostConn.conn.open) {
+            hostConn.conn.send(data);
+        }
+    }
+}
+
+function handlePlayerLab(data) {
+    // Store player's lab for scoring
+    if (!gameState.roundResults[data.round]) gameState.roundResults[data.round] = [];
+    gameState.roundResults[data.round].push({
+        playerId: data.playerId,
+        lab: data.lab,
+        name: gameState.room.players.get(data.playerId)?.name || 'Jugador'
+    });
+    
+    // If host, check if all players have submitted
+    if (gameState.player.isHost) {
+        const expected = gameState.room.players.size;
+        const received = gameState.roundResults[data.round]?.length || 0;
+        if (received >= expected) {
+            endRound();
+        }
+    }
+}
+
+function endRound() {
+    if (!gameState.roundActive) return;
+    gameState.roundActive = false;
+    clearInterval(gameState.timerInterval);
+    gameElements.endTurnBtn.disabled = true;
+    
+    // Calculate scores for all players
+    calculateRoundScores();
+    
+    // Show results
+    showRoundResults();
+    
+    addDebug(`🏁 Ronda ${gameState.currentRound} terminada`);
+}
+
+function calculateDeltaE(playerLab, targetLab) {
+    // CIE76 Delta E
+    const dL = playerLab.L - targetLab.L;
+    const da = playerLab.a - targetLab.a;
+    const db = playerLab.b - targetLab.b;
+    const deltaE = Math.sqrt(dL*dL + da*da + db*db);
+    
+    // Convert to percentage (100 = perfect match, 0 = max difference)
+    // Max theoretical DeltaE in Lab is ~200, but practical max ~100
+    const maxDeltaE = 100;
+    const similarity = Math.max(0, Math.min(100, 100 - (deltaE / maxDeltaE) * 100));
+    
+    return Math.round(similarity);
+}
+
+function calculateRoundScores() {
+    const results = gameState.roundResults[gameState.currentRound] || [];
+    const timeBonusActive = gameState.room.config?.timeBonus === 'yes' || 
+                           (gameState.room.config?.timeBonus === 'sometimes' && Math.random() < 0.5);
+    
+    results.forEach(r => {
+        const baseScore = calculateDeltaE(r.lab, gameState.targetLab);
+        let finalScore = baseScore;
+        
+        // Time bonus
+        if (timeBonusActive && r.timeRemaining !== undefined) {
+            const ratio = Math.max(0, Math.min(1, r.timeRemaining / getRoundDuration(gameState.currentRound)));
+            const bonusPercent = ratio * 0.2;
+            finalScore = Math.round(baseScore * (1 + bonusPercent));
+        }
+        
+        // Store
+        if (gameState.scores[r.playerId]) {
+            gameState.scores[r.playerId].roundScores.push(finalScore);
+            gameState.scores[r.playerId].total += finalScore;
+        }
+        
+        r.score = finalScore;
+        r.baseScore = baseScore;
+    });
+    
+    // Sort by score descending
+    results.sort((a, b) => b.score - a.score);
+}
+
+function showRoundResults() {
+    gameElements.resultsRoundNum.textContent = gameState.currentRound;
+    gameElements.resultsList.innerHTML = '';
+    gameElements.resultsTotal.innerHTML = '';
+    
+    const results = gameState.roundResults[gameState.currentRound] || [];
+    
+    results.forEach((r, index) => {
+        const isWinner = index === 0;
+        const isCurrentPlayer = r.playerId === gameState.player.id;
+        
+        const item = document.createElement('div');
+        item.className = `result-item ${isWinner ? 'winner' : ''} ${isCurrentPlayer ? 'current-player' : ''}`;
+        item.innerHTML = `
+            <div class="result-info">
+                <div class="result-avatar">${gameState.room.players.get(r.playerId)?.avatar || '😀'}</div>
+                <span class="result-name">${r.name}${isCurrentPlayer ? ' (Tú)' : ''}</span>
+                ${isWinner ? '<span class="result-badge">👑 Ganador</span>' : ''}
+            </div>
+            <span class="result-score">${r.score}%</span>
+        `;
+        gameElements.resultsList.appendChild(item);
+    });
+    
+    // Show totals
+    let totalHtml = 'Totales: ';
+    Object.entries(gameState.scores).forEach(([id, data]) => {
+        const p = gameState.room.players.get(id);
+        totalHtml += `<span style="margin: 0 0.5rem;">${p?.name || 'Jugador'}: ${data.total}</span>`;
+    });
+    gameElements.resultsTotal.innerHTML = totalHtml;
+    
+    gameElements.roundResultsOverlay.classList.remove('hidden');
+}
+
+function handleNextRound() {
+    gameElements.roundResultsOverlay.classList.add('hidden');
+    
+    if (gameState.currentRound >= gameState.totalRounds) {
+        endGame();
+    } else {
+        startRound();
+    }
+}
+
+function endGame() {
+    // Calculate final winner
+    const scores = Object.entries(gameState.scores)
+        .map(([id, data]) => ({
+            id,
+            name: gameState.room.players.get(id)?.name || 'Jugador',
+            avatar: gameState.room.players.get(id)?.avatar || '😀',
+            total: data.total
+        }))
+        .sort((a, b) => b.total - a.total);
+    
+    const winner = scores[0];
+    
+    // Build final scores display
+    gameElements.finalScores.innerHTML = '';
+    scores.forEach((s, index) => {
+        const item = document.createElement('div');
+        item.className = `final-score-item ${index === 0 ? 'winner' : ''}`;
+        item.innerHTML = `
+            <span class="final-rank">${index + 1}</span>
+            <div class="final-info">
+                <div class="final-avatar">${s.avatar}</div>
+                <span class="final-name">${s.name}</span>
+            </div>
+            <span class="final-score">${s.total}</span>
+        `;
+        gameElements.finalScores.appendChild(item);
+    });
+    
+    gameElements.winnerAnnouncement.textContent = `🏆 ¡${winner.name} ha ganado con ${winner.total} puntos!`;
+    
+    gameElements.roundResultsOverlay.classList.add('hidden');
+    gameElements.gameEndOverlay.classList.remove('hidden');
+    
+    addDebug(`🏆 Partida finalizada - Ganador: ${winner.name} (${winner.total} pts)`);
+}
+
+function handleGameExit() {
+    if (gameState.player.isHost) {
+        // Host ends game immediately
+        broadcast('game-ended', {});
+        showScreen('home-screen');
+    } else {
+        // Guest leaves game
+        showScreen('home-screen');
+    }
+    cleanupGame();
+}
+
+function cleanupGame() {
+    clearInterval(gameState.timerInterval);
+    clearInterval(gameState.countdownInterval);
+    gameState.roundActive = false;
+    gameState.turnEnded = false;
+}
+
+// Handle incoming game messages
+function handleGameMessage(from, data) {
+    switch (data.type) {
+        case 'player-lab':
+            handlePlayerLab(data);
+            break;
+        case 'start-round':
+            if (!gameState.player.isHost) startRound();
+            break;
+        case 'end-round':
+            if (!gameState.player.isHost) endRound();
+            break;
+        case 'game-ended':
+            showScreen('home-screen');
+            cleanupGame();
+            break;
+        case 'start-game':
+            if (data.config) {
+                gameState.room.config = data.config;
+                gameState.room.roundDurations = data.roundDurations;
+                gameState.room.totalRounds = data.totalRounds;
+                gameState.room.baseDuration = data.baseDuration;
+            }
+            startGame();
+            break;
+    }
+}
+
+// Broadcast to all players
+function broadcastGame(type, data) {
+    broadcast(type, data);
+}
+
+// Expose game API
+window.gameAPI = {
+    startGame,
+    handleGameMessage
+};
