@@ -2062,6 +2062,12 @@ async function startGame() {
     // Load all figures (preloaded + local)
     await loadAllFigures();
     
+    // Initialize scores for all players
+    gameState.scores = {};
+    gameState.room.players.forEach((p, id) => {
+        gameState.scores[id] = { roundScores: [], total: 0 };
+    });
+    
     // Start countdown
     await runCountdown();
     
@@ -2104,6 +2110,20 @@ function startRound() {
     // Select figure for this round
     selectFigureForRound();
     
+    // Broadcast figure data to all players so they can load the image
+    if (gameState.player.isHost && gameState.currentFigure) {
+        broadcast('figure-data', {
+            round: gameState.currentRound,
+            figure: {
+                id: gameState.currentFigure.id,
+                name: gameState.currentFigure.name,
+                original: gameState.currentFigure.original,
+                mask: gameState.currentFigure.mask,
+                targetColor: gameState.currentFigure.targetColor
+            }
+        });
+    }
+    
     // Draw figure with mask
     drawFigureWithMask();
     
@@ -2144,6 +2164,7 @@ function drawFigureWithMask() {
     const canvas = gameElements.canvas;
     const ctx = canvas.getContext('2d');
     const img = new Image();
+    const figure = gameState.currentFigure;
     
     img.onload = () => {
         // Canvas size 600x500
@@ -2159,17 +2180,30 @@ function drawFigureWithMask() {
         
         ctx.drawImage(img, drawX, drawY, drawW, drawH);
         
-        // Apply mask (white overlay on masked areas)
-        // The mask is stored as dataURL with white areas
+        // Apply mask: white overlay where mask is white (target color area)
+        // The mask has white where the target color was detected
         const maskImg = new Image();
         maskImg.onload = () => {
-            ctx.globalCompositeOperation = 'source-atop';
-            ctx.drawImage(maskImg, drawX, drawY, drawW, drawH);
-            ctx.globalCompositeOperation = 'source-over';
+            // Create temporary canvas for the white overlay with mask alpha
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = canvas.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Fill with white
+            tempCtx.fillStyle = '#FFFFFF';
+            tempCtx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Apply mask as alpha: destination-in keeps white only where mask is opaque
+            tempCtx.globalCompositeOperation = 'destination-in';
+            tempCtx.drawImage(maskImg, drawX, drawY, drawW, drawH);
+            
+            // Draw white masked overlay over original image
+            ctx.drawImage(tempCanvas, 0, 0);
         };
         maskImg.src = figure.mask;
     };
-    img.src = gameState.currentFigure.original;
+    img.src = figure.original;
 }
 
 function startTimer() {
@@ -2255,10 +2289,46 @@ function endRound() {
     // Calculate scores for all players
     calculateRoundScores();
     
-    // Show results
+    // Broadcast results to all players
+    broadcastRoundResults();
+    
+    // Show results locally
     showRoundResults();
     
+    // Auto-advance after 5 seconds
+    gameState.countdownInterval = setTimeout(() => {
+        handleNextRoundAuto();
+    }, 5000);
+    
     addDebug(`🏁 Ronda ${gameState.currentRound} terminada`);
+}
+
+function broadcastRoundResults() {
+    const results = gameState.roundResults[gameState.currentRound] || [];
+    const scoresData = {};
+    Object.entries(gameState.scores).forEach(([id, data]) => {
+        scoresData[id] = { total: data.total, roundScores: [...data.roundScores] };
+    });
+    
+    broadcast('round-results', {
+        round: gameState.currentRound,
+        results: results.map(r => ({
+            playerId: r.playerId,
+            name: r.name,
+            lab: r.lab,
+            score: r.score,
+            baseScore: r.baseScore
+        })),
+        scores: scoresData,
+        targetLab: gameState.targetLab,
+        currentFigure: gameState.currentFigure ? {
+            id: gameState.currentFigure.id,
+            name: gameState.currentFigure.name,
+            original: gameState.currentFigure.original,
+            mask: gameState.currentFigure.mask,
+            targetColor: gameState.currentFigure.targetColor
+        } : null
+    });
 }
 
 function calculateDeltaE(playerLab, targetLab) {
@@ -2342,12 +2412,28 @@ function showRoundResults() {
 }
 
 function handleNextRound() {
+    clearTimeout(gameState.countdownInterval);
     gameElements.roundResultsOverlay.classList.add('hidden');
     
     if (gameState.currentRound >= gameState.totalRounds) {
         endGame();
     } else {
         startRound();
+    }
+}
+
+function handleNextRoundAuto() {
+    clearTimeout(gameState.countdownInterval);
+    gameElements.roundResultsOverlay.classList.add('hidden');
+    
+    if (gameState.currentRound >= gameState.totalRounds) {
+        endGame();
+    } else {
+        // Host starts next round and broadcasts
+        if (gameState.player.isHost) {
+            startRound();
+            broadcast('start-round', { round: gameState.currentRound });
+        }
     }
 }
 
@@ -2385,6 +2471,17 @@ function endGame() {
     gameElements.roundResultsOverlay.classList.add('hidden');
     gameElements.gameEndOverlay.classList.remove('hidden');
     
+    // Broadcast final scores to all players
+    broadcast('game-results', {
+        scores: scores.map(s => ({
+            id: s.id,
+            name: s.name,
+            avatar: s.avatar,
+            total: s.total
+        })),
+        winner: winner.id
+    });
+    
     addDebug(`🏆 Partida finalizada - Ganador: ${winner.name} (${winner.total} pts)`);
 }
 
@@ -2392,10 +2489,10 @@ function handleGameExit() {
     if (gameState.player.isHost) {
         // Host ends game immediately
         broadcast('game-ended', {});
-        showScreen('home-screen');
+        showScreen('waiting-host-screen');
     } else {
         // Guest leaves game
-        showScreen('home-screen');
+        showScreen('guest-waiting-screen');
     }
     cleanupGame();
 }
@@ -2416,12 +2513,25 @@ function handleGameMessage(from, data) {
         case 'start-round':
             if (!gameState.player.isHost) startRound();
             break;
+        case 'figure-data':
+            handleFigureData(data);
+            break;
         case 'end-round':
             if (!gameState.player.isHost) endRound();
             break;
         case 'game-ended':
-            showScreen('home-screen');
+            if (gameState.player.isHost) {
+                showScreen('waiting-host-screen');
+            } else {
+                showScreen('guest-waiting-screen');
+            }
             cleanupGame();
+            break;
+        case 'round-results':
+            handleRoundResults(data);
+            break;
+        case 'game-results':
+            handleGameResults(data);
             break;
         case 'start-game':
             if (data.config) {
@@ -2433,6 +2543,69 @@ function handleGameMessage(from, data) {
             startGame();
             break;
     }
+}
+
+function handleFigureData(data) {
+    // Receive figure data from host and load it
+    if (data.figure) {
+        gameState.currentFigure = data.figure;
+        gameState.targetLab = data.figure.targetColor;
+        gameElements.figureLabel.textContent = data.figure.name || 'Figura';
+        drawFigureWithMask();
+    }
+}
+
+function handleRoundResults(data) {
+    // Update local state with broadcasted results
+    gameState.roundResults[data.round] = data.results;
+    
+    // Update scores
+    Object.entries(data.scores).forEach(([id, scoreData]) => {
+        if (!gameState.scores[id]) gameState.scores[id] = { roundScores: [], total: 0 };
+        gameState.scores[id].total = scoreData.total;
+        gameState.scores[id].roundScores = scoreData.roundScores;
+    });
+    
+    gameState.targetLab = data.targetLab;
+    
+    // If we have figure data, update current figure
+    if (data.currentFigure) {
+        gameState.currentFigure = data.currentFigure;
+    }
+    
+    // Show results
+    showRoundResults();
+    
+    // Auto-advance after 5 seconds (guest side)
+    gameState.countdownInterval = setTimeout(() => {
+        handleNextRoundAuto();
+    }, 5000);
+}
+
+function handleGameResults(data) {
+    // Build final scores display
+    gameElements.finalScores.innerHTML = '';
+    data.scores.forEach((s, index) => {
+        const item = document.createElement('div');
+        item.className = `final-score-item ${index === 0 ? 'winner' : ''}`;
+        item.innerHTML = `
+            <span class="final-rank">${index + 1}</span>
+            <div class="final-info">
+                <div class="final-avatar">${s.avatar}</div>
+                <span class="final-name">${s.name}</span>
+            </div>
+            <span class="final-score">${s.total}</span>
+        `;
+        gameElements.finalScores.appendChild(item);
+    });
+    
+    const winner = data.scores.find(s => s.id === data.winner);
+    gameElements.winnerAnnouncement.textContent = winner 
+        ? `🏆 ¡${winner.name} ha ganado con ${winner.total} puntos!`
+        : '🏆 Partida finalizada';
+    
+    gameElements.roundResultsOverlay.classList.add('hidden');
+    gameElements.gameEndOverlay.classList.remove('hidden');
 }
 
 // Broadcast to all players
