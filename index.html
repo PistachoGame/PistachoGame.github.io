@@ -119,6 +119,14 @@
                 </header>
 
                 <main class="config-main">
+                    <!-- Botón para ir a Agregar Figuras (primera opción) -->
+                    <div class="config-figures-btn-container">
+                        <button id="config-go-figures-btn" class="btn btn-secondary btn-large" style="display:flex;align-items:center;justify-content:center;gap:0.75rem;">
+                            <span class="btn-icon">🖼️</span>
+                            <span>Agregar / Gestionar Figuras</span>
+                        </button>
+                    </div>
+                    
                     <form id="config-form">
                         
                         <!-- 1. CANTIDAD DE RONDAS -->
@@ -236,6 +244,103 @@
                         Guardar y volver
                     </button>
                 </footer>
+            </div>
+        </div>
+
+        <!-- 6. AGREGAR FIGURAS (Solo host) -->
+        <div id="figures-screen" class="screen hidden">
+            <div class="figures-container">
+                <header class="figures-header">
+                    <button id="figures-back-btn" class="icon-btn" title="Volver">←</button>
+                    <h1>Agregar Figuras</h1>
+                    <div class="figures-save-status" id="figures-save-status"></div>
+                </header>
+
+                <main class="figures-main">
+                    <!-- Lista de figuras guardadas -->
+                    <section class="figures-section">
+                        <h2>Figuras guardadas</h2>
+                        <div class="figures-list" id="figures-list">
+                            <!-- Se llenan dinámicamente -->
+                        </div>
+                        <p class="figures-empty" id="figures-empty">No hay figuras guardadas. Agrega una para empezar.</p>
+                    </section>
+
+                    <!-- Formulario agregar nueva figura -->
+                    <section class="figures-section">
+                        <h2>Nueva figura</h2>
+                        
+                        <!-- Pestañas de origen -->
+                        <div class="figures-tabs">
+                            <button class="figures-tab active" data-tab="file">📁 Desde dispositivo</button>
+                            <button class="figures-tab" data-tab="url">🔗 Desde URL</button>
+                        </div>
+
+                        <!-- Tab: Archivo -->
+                        <div class="figures-tab-content active" id="tab-file">
+                            <div class="drop-zone" id="drop-zone">
+                                <input type="file" id="figure-file-input" accept="image/*" hidden>
+                                <div class="drop-zone-content">
+                                    <span class="drop-icon">📤</span>
+                                    <p>Arrastra una imagen aquí o haz clic para seleccionar</p>
+                                    <span class="drop-hint">PNG, JPG, WebP · Máx. 2 MB</span>
+                                </div>
+                            </div>
+                            <div class="file-preview hidden" id="file-preview">
+                                <img id="file-preview-img" src="" alt="Vista previa">
+                                <button class="btn btn-small btn-danger" id="file-clear-btn">✕ Quitar</button>
+                            </div>
+                        </div>
+
+                        <!-- Tab: URL -->
+                        <div class="figures-tab-content hidden" id="tab-url">
+                            <div class="url-input-group">
+                                <input type="url" id="figure-url-input" placeholder="https://ejemplo.com/imagen.png" required>
+                                <button class="btn btn-primary" id="figure-url-fetch-btn">
+                                    <span class="btn-icon">🔍</span>
+                                    Buscar
+                                </button>
+                            </div>
+                            <div class="url-preview hidden" id="url-preview">
+                                <img id="url-preview-img" src="" alt="Vista previa">
+                                <button class="btn btn-small btn-danger" id="url-clear-btn">✕ Quitar</button>
+                            </div>
+                            <p class="url-hint">Extrae la imagen principal de la página (Open Graph, meta tags, primera img grande)</p>
+                        </div>
+                    </section>
+
+                    <!-- Editor de máscara -->
+                    <section class="figures-section hidden" id="mask-editor-section">
+                        <h2>Definir zona de color <span class="mask-status" id="mask-status">(pendiente)</span></h2>
+                        <p class="mask-instruction">Haz clic sobre el color que quieres ocultar. La máscara cubrirá píxeles similares.</p>
+                        
+                        <div class="mask-editor">
+                            <canvas id="mask-canvas"></canvas>
+                        </div>
+                        
+                        <div class="mask-controls">
+                            <div class="mask-tolerance">
+                                <label>Tolerancia: <span id="tolerance-value">50</span></label>
+                                <input type="range" id="tolerance-slider" min="10" max="150" value="50">
+                            </div>
+                            <div class="mask-preview-info">
+                                <div class="picked-color" id="picked-color-box"></div>
+                                <div class="picked-color-lab" id="picked-color-lab">L: — a: — b: —</div>
+                            </div>
+                        </div>
+                        
+                        <div class="mask-actions">
+                            <button class="btn btn-secondary" id="mask-undo-btn" disabled>
+                                <span class="btn-icon">↩️</span>
+                                Deshacer
+                            </button>
+                            <button class="btn btn-primary" id="mask-save-btn" disabled>
+                                <span class="btn-icon">💾</span>
+                                Guardar figura
+                            </button>
+                        </div>
+                    </section>
+                </main>
             </div>
         </div>
     </div>

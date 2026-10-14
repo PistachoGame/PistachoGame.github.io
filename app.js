@@ -726,6 +726,7 @@ function cacheConfigElements() {
     configElements.saveBtn = document.getElementById('config-save-btn');
     configElements.saveStatus = document.getElementById('config-save-status');
     configElements.form = document.getElementById('config-form');
+    configElements.goFiguresBtn = document.getElementById('config-go-figures-btn');
     
     configElements.roundsMode = document.querySelectorAll('input[name="rounds-mode"]');
     configElements.durationMode = document.querySelectorAll('input[name="duration-mode"]');
@@ -749,6 +750,10 @@ function setupConfigListeners() {
     });
     
     configElements.saveBtn.addEventListener('click', saveConfig);
+    
+    if (configElements.goFiguresBtn) {
+        configElements.goFiguresBtn.addEventListener('click', openFiguresScreen);
+    }
     
     configElements.roundsMode.forEach(r => r.addEventListener('change', () => toggleCustomInput('rounds')));
     configElements.durationMode.forEach(r => r.addEventListener('change', () => toggleCustomInput('duration')));
@@ -1003,3 +1008,783 @@ window.gameConfig = {
     precalculateRoundDurations,
     getConfig: () => gameState.room.config
 };
+
+// ========================================
+// PANTALLA DE AGREGAR FIGURAS
+// ========================================
+
+// Estado de figuras
+const figuresState = {
+    figures: [],           // Array de figuras guardadas
+    currentFigure: null,   // Figura en edición
+    history: [],           // Historial para undo
+    historyIndex: -1,
+    maskCanvas: null,
+    maskCtx: null,
+    sourceImage: null,
+    maskImageData: null,
+    pickedColor: null,     // {r,g,b, lab}
+    tolerance: 50
+};
+
+// DB para figuras (IndexedDB)
+const FIGURES_DB_NAME = 'colorGameFigures';
+const FIGURES_STORE = 'figures';
+
+// Inicializar IndexedDB
+function initFiguresDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(FIGURES_DB_NAME, 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(FIGURES_STORE)) {
+                db.createObjectStore(FIGURES_STORE, { keyPath: 'id' });
+            }
+        };
+    });
+}
+
+// Cargar figuras al iniciar
+async function loadFigures() {
+    try {
+        const db = await initFiguresDB();
+        const tx = db.transaction(FIGURES_STORE, 'readonly');
+        const store = tx.objectStore(FIGURES_STORE);
+        const request = store.getAll();
+        request.onsuccess = () => {
+            figuresState.figures = request.result || [];
+            // Cargar también figuras locales predefinidas
+            loadLocalFigures();
+            renderFiguresList();
+        };
+    } catch (e) {
+        addDebug('Error cargando figuras: ' + e.message);
+        figuresState.figures = [];
+        loadLocalFigures();
+        renderFiguresList();
+    }
+}
+
+// Cargar figuras locales desde /img/game/ y figures-config.js
+async function loadLocalFigures() {
+    try {
+        // Intentar cargar el archivo de configuración del desarrollador
+        const configResponse = await fetch('img/game/figures-config.js');
+        if (configResponse.ok) {
+            const configText = await configResponse.text();
+            // Evaluar el config para obtener FIGURES_CONFIG
+            eval(configText);
+            if (typeof FIGURES_CONFIG !== 'undefined' && Array.isArray(FIGURES_CONFIG)) {
+                for (const figConfig of FIGURES_CONFIG) {
+                    // Verificar si ya existe en IndexedDB
+                    const exists = figuresState.figures.some(f => f.id === figConfig.id || f.original === figConfig.url);
+                    if (!exists) {
+                        // Cargar la imagen y crear figura
+                        await loadLocalFigureFromConfig(figConfig);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        addDebug('No se pudo cargar figures-config.js: ' + e.message);
+    }
+    
+    // También escanear la carpeta img/game/ por imágenes (fallback)
+    // Nota: En entorno web no se puede listar directorios, así que dependemos del config
+}
+
+async function loadLocalFigureFromConfig(config) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const originalDataUrl = canvas.toDataURL('image/png');
+            
+            // Crear máscara blanca simple (se editará después si se quiere)
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = img.naturalWidth;
+            maskCanvas.height = img.naturalHeight;
+            const mctx = maskCanvas.getContext('2d');
+            mctx.drawImage(img, 0, 0);
+            const maskDataUrl = maskCanvas.toDataURL('image/png');
+            
+            const figure = {
+                id: config.id || 'local_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                name: config.name || 'Figura local',
+                original: originalDataUrl,
+                mask: maskDataUrl,
+                targetColor: {
+                    rgb: config.lab ? labToRgb(config.lab.L, config.lab.a, config.lab.b) : { r: 255, g: 255, b: 0 },
+                    lab: config.lab || { L: 50, a: 0, b: 0 }
+                },
+                tolerance: config.tolerance || 50,
+                isLocal: true,
+                localUrl: config.url,
+                createdAt: Date.now()
+            };
+            
+            figuresState.figures.push(figure);
+            saveFigureToDB(figure); // Guardar también en IndexedDB para consistencia
+            resolve();
+        };
+        img.onerror = () => {
+            addDebug('Error cargando imagen local: ' + config.url);
+            resolve();
+        };
+        img.src = config.url;
+    });
+}
+
+// Conversión CIELAB a RGB (para figuras locales)
+function labToRgb(L, a, b) {
+    // L*a*b* a XYZ (D65)
+    const fy = (L + 16) / 116;
+    const fx = a / 500 + fy;
+    const fz = fy - b / 200;
+    
+    const Xn = 0.95047, Yn = 1.00000, Zn = 1.08883;
+    const X = Xn * labInvF(fx);
+    const Y = Yn * labInvF(fy);
+    const Z = Zn * labInvF(fz);
+    
+    // XYZ a sRGB
+    let r = X * 3.2404542 + Y * -1.5371385 + Z * -0.4985314;
+    let g = X * -0.9692660 + Y * 1.8760108 + Z * 0.0415560;
+    let bVal = X * 0.0556434 + Y * -0.2040259 + Z * 1.0572252; // Renombrado de 'let b' a 'let bVal'
+    
+    // Gamma correction
+    const toSRGB = (c) => c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1/2.4) - 0.055;
+    r = Math.round(Math.max(0, Math.min(255, toSRGB(r) * 255)));
+    g = Math.round(Math.max(0, Math.min(255, toSRGB(g) * 255)));
+    bVal = Math.round(Math.max(0, Math.min(255, toSRGB(bVal) * 255))); // Actualizado a bVal
+    
+    return { r, g, b: bVal }; // Retorna usando bVal
+}
+
+function labInvF(t) {
+    const delta = 6/29;
+    return t > delta ? t*t*t : 3*delta*delta*(t - 4/29);
+}
+
+// Guardar figura en DB
+async function saveFigureToDB(figure) {
+    const db = await initFiguresDB();
+    const tx = db.transaction(FIGURES_STORE, 'readwrite');
+    const store = tx.objectStore(FIGURES_STORE);
+    store.put(figure);
+    return new Promise((resolve, reject) => {
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+// Eliminar figura de DB
+async function deleteFigureFromDB(id) {
+    const db = await initFiguresDB();
+    const tx = db.transaction(FIGURES_STORE, 'readwrite');
+    const store = tx.objectStore(FIGURES_STORE);
+    store.delete(id);
+    return new Promise((resolve, reject) => {
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+// Elementos DOM de figures
+const figuresElements = {};
+
+function cacheFiguresElements() {
+    figuresElements.backBtn = document.getElementById('figures-back-btn');
+    figuresElements.saveStatus = document.getElementById('figures-save-status');
+    figuresElements.list = document.getElementById('figures-list');
+    figuresElements.empty = document.getElementById('figures-empty');
+    
+    // Tabs
+    figuresElements.tabs = document.querySelectorAll('.figures-tab');
+    figuresElements.tabFile = document.getElementById('tab-file');
+    figuresElements.tabUrl = document.getElementById('tab-url');
+    
+    // File input
+    figuresElements.dropZone = document.getElementById('drop-zone');
+    figuresElements.fileInput = document.getElementById('figure-file-input');
+    figuresElements.filePreview = document.getElementById('file-preview');
+    figuresElements.filePreviewImg = document.getElementById('file-preview-img');
+    figuresElements.fileClearBtn = document.getElementById('file-clear-btn');
+    
+    // URL input
+    figuresElements.urlInput = document.getElementById('figure-url-input');
+    figuresElements.urlFetchBtn = document.getElementById('figure-url-fetch-btn');
+    figuresElements.urlPreview = document.getElementById('url-preview');
+    figuresElements.urlPreviewImg = document.getElementById('url-preview-img');
+    figuresElements.urlClearBtn = document.getElementById('url-clear-btn');
+    
+    // Mask editor
+    figuresElements.maskSection = document.getElementById('mask-editor-section');
+    figuresElements.maskCanvas = document.getElementById('mask-canvas');
+    figuresElements.maskStatus = document.getElementById('mask-status');
+    figuresElements.toleranceSlider = document.getElementById('tolerance-slider');
+    figuresElements.toleranceValue = document.getElementById('tolerance-value');
+    figuresElements.pickedColorBox = document.getElementById('picked-color-box');
+    figuresElements.pickedColorLab = document.getElementById('picked-color-lab');
+    figuresElements.maskUndoBtn = document.getElementById('mask-undo-btn');
+    figuresElements.maskSaveBtn = document.getElementById('mask-save-btn');
+}
+
+function setupFiguresListeners() {
+    // Back button
+    figuresElements.backBtn.addEventListener('click', () => {
+        showScreen('waiting-host-screen');
+    });
+    
+    // Tabs
+    figuresElements.tabs.forEach(tab => {
+        tab.addEventListener('click', () => switchFiguresTab(tab.dataset.tab));
+    });
+    
+    // File drop zone
+    figuresElements.dropZone.addEventListener('click', () => figuresElements.fileInput.click());
+    figuresElements.dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        figuresElements.dropZone.classList.add('drag-over');
+    });
+    figuresElements.dropZone.addEventListener('dragleave', () => {
+        figuresElements.dropZone.classList.remove('drag-over');
+    });
+    figuresElements.dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        figuresElements.dropZone.classList.remove('drag-over');
+        if (e.dataTransfer.files.length) handleFileSelect(e.dataTransfer.files[0]);
+    });
+    figuresElements.fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length) handleFileSelect(e.target.files[0]);
+    });
+    figuresElements.fileClearBtn.addEventListener('click', clearFileInput);
+    
+    // URL fetch
+    figuresElements.urlFetchBtn.addEventListener('click', fetchImageFromUrl);
+    figuresElements.urlInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') fetchImageFromUrl();
+    });
+    figuresElements.urlClearBtn.addEventListener('click', clearUrlInput);
+    
+    // Mask editor
+    figuresElements.toleranceSlider.addEventListener('input', (e) => {
+        // Guardar estado anterior solo si hay color seleccionado y la tolerancia cambió significativamente
+        if (figuresState.pickedColor) {
+            saveHistoryState();
+        }
+        figuresState.tolerance = parseInt(e.target.value);
+        figuresElements.toleranceValue.textContent = figuresState.tolerance;
+        if (figuresState.sourceImage) applyMask();
+    });
+    
+    figuresElements.maskUndoBtn.addEventListener('click', undoMask);
+    figuresElements.maskSaveBtn.addEventListener('click', saveCurrentFigure);
+    
+    // Canvas click for color picking
+    figuresElements.maskCanvas.addEventListener('click', pickColorFromCanvas);
+}
+
+function switchFiguresTab(tab) {
+    figuresElements.tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    figuresElements.tabFile.classList.toggle('active', tab === 'file');
+    figuresElements.tabUrl.classList.toggle('active', tab === 'url');
+    figuresElements.tabFile.classList.toggle('hidden', tab !== 'file');
+    figuresElements.tabUrl.classList.toggle('hidden', tab !== 'url');
+}
+
+function initFiguresScreen() {
+    cacheFiguresElements();
+    setupFiguresListeners();
+    loadFigures();
+}
+
+function openFiguresScreen() {
+    if (!gameState.player.isHost) return;
+    initFiguresScreen();
+    showScreen('figures-screen');
+}
+
+// ========================================
+// MANEJO DE ARCHIVOS
+// ========================================
+
+function handleFileSelect(file) {
+    if (!file.type.startsWith('image/')) {
+        alert('Por favor selecciona una imagen válida');
+        return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+        alert('La imagen no debe superar 2 MB');
+        return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        loadSourceImage(e.target.result);
+    };
+    reader.readAsDataURL(file);
+}
+
+function clearFileInput() {
+    figuresElements.fileInput.value = '';
+    figuresElements.filePreview.classList.add('hidden');
+    figuresElements.dropZone.querySelector('.drop-zone-content').style.display = 'flex';
+    figuresElements.filePreviewImg.src = '';
+}
+
+// ========================================
+// FETCH DESDE URL
+// ========================================
+
+async function fetchImageFromUrl() {
+    const url = figuresElements.urlInput.value.trim();
+    if (!url) return alert('Ingresa una URL válida');
+    
+    figuresElements.urlFetchBtn.disabled = true;
+    figuresElements.urlFetchBtn.innerHTML = '<span class="btn-icon">⏳</span> Buscando...';
+    
+    try {
+        // Primero intentar si es una URL directa de imagen
+        const isDirectImage = /\.(jpg|jpeg|png|webp|gif|bmp)(\?.*)?$/i.test(url);
+        
+        if (isDirectImage) {
+            // URL directa a imagen - intentar cargar directamente
+            await loadImageWithCors(url);
+        } else {
+            // URL de página web - intentar extraer imagen
+            const imageUrl = await extractImageFromUrl(url);
+            if (!imageUrl) throw new Error('No se encontró imagen en la página');
+            await loadImageWithCors(imageUrl);
+        }
+        
+    } catch (err) {
+        addDebug('Error fetch URL: ' + err.message);
+        alert('No se pudo obtener la imagen: ' + err.message);
+    } finally {
+        figuresElements.urlFetchBtn.disabled = false;
+        figuresElements.urlFetchBtn.innerHTML = '<span class="btn-icon">🔍</span> Buscar';
+    }
+}
+
+async function extractImageFromUrl(pageUrl) {
+    // Usar textise dot iitty o similar para extraer meta tags
+    // Por simplicidad, intentamos fetch directo con modo no-cors y luego fallback
+    try {
+        // Proxy CORS gratuito para leer HTML
+        const proxyUrl = `https://r.jina.ai/http://${pageUrl.replace(/^https?:\/\//, '')}`;
+        const response = await fetch(proxyUrl);
+        const text = await response.text();
+        
+        // Buscar og:image, twitter:image, o primera img grande
+        const ogMatch = text.match(/<meta property="og:image" content="([^"]+)"/i) ||
+                       text.match(/<meta name="twitter:image" content="([^"]+)"/i);
+        if (ogMatch) return ogMatch[1];
+        
+        // Buscar primera imagen grande en el HTML
+        const imgMatches = [...text.matchAll(/<img[^>]+src=["']([^"']+)["']/gi)];
+        for (const match of imgMatches) {
+            const src = match[1];
+            if (src.startsWith('http') || src.startsWith('//')) {
+                return src.startsWith('//') ? 'https:' + src : src;
+            }
+        }
+    } catch (e) {
+        addDebug('Error extrayendo imagen: ' + e.message);
+    }
+    return null;
+}
+
+function loadImageWithCors(imageUrl) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            // Convertir a data URL para evitar problemas de CORS después
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const dataUrl = canvas.toDataURL('image/png');
+            loadSourceImage(dataUrl);
+            resolve();
+        };
+        img.onerror = () => reject(new Error('No se pudo cargar la imagen (CORS)'));
+        img.src = imageUrl;
+    });
+}
+
+function clearUrlInput() {
+    figuresElements.urlInput.value = '';
+    figuresElements.urlPreview.classList.add('hidden');
+    figuresElements.urlPreviewImg.src = '';
+}
+
+// ========================================
+// CARGA DE IMAGEN FUENTE
+// ========================================
+
+function loadSourceImage(dataUrl) {
+    figuresElements.dropZone.querySelector('.drop-zone-content').style.display = 'none';
+    figuresElements.filePreview.classList.remove('hidden');
+    figuresElements.filePreviewImg.src = dataUrl;
+    
+    // Cargar en canvas para editor de máscara
+    const img = new Image();
+    img.onload = () => {
+        setupMaskEditor(img);
+        figuresElements.maskSection.classList.remove('hidden');
+        figuresElements.maskStatus.textContent = 'Haz clic en el color a ocultar';
+        figuresElements.maskStatus.style.color = 'var(--primary-color)';
+        figuresElements.maskSaveBtn.disabled = true;
+        figuresElements.maskUndoBtn.disabled = true;
+        figuresState.history = [];
+        figuresState.historyIndex = -1;
+    };
+    img.src = dataUrl;
+    figuresState.sourceImage = img;
+}
+
+function setupMaskEditor(img) {
+    const canvas = figuresElements.maskCanvas;
+    const ctx = canvas.getContext('2d');
+    
+    // Canvas FIJO de 600x500 - la imagen se centra y escala para llenar
+    const canvasW = 600;
+    const canvasH = 500;
+    canvas.width = canvasW;
+    canvas.height = canvasH;
+    
+    // Calcular escala para que la imagen cubra todo el canvas (cover)
+    const scale = Math.max(canvasW / img.naturalWidth, canvasH / img.naturalHeight);
+    const drawW = Math.round(img.naturalWidth * scale);
+    const drawH = Math.round(img.naturalHeight * scale);
+    const drawX = Math.round((canvasW - drawW) / 2);
+    const drawY = Math.round((canvasH - drawH) / 2);
+    
+    // Fondo negro (para transparencias)
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvasW, canvasH);
+    
+    // Dibujar imagen centrada y escalada (cover)
+    ctx.drawImage(img, drawX, drawY, drawW, drawH);
+    
+    figuresState.maskCanvas = canvas;
+    figuresState.maskCtx = ctx;
+    
+    // GUARDAR IMAGEN ORIGINAL LIMPIA (sin máscara) - base para recalcular
+    figuresState.originalImageData = ctx.getImageData(0, 0, canvasW, canvasH);
+    figuresState.maskImageData = ctx.getImageData(0, 0, canvasW, canvasH);
+    
+    // Sincronizar slider de tolerancia con el valor actual
+    figuresElements.toleranceSlider.value = figuresState.tolerance;
+    figuresElements.toleranceValue.textContent = figuresState.tolerance;
+    
+    // Guardar estado inicial en historial (solo la imagen original)
+    saveHistoryState();
+}
+
+function saveHistoryState() {
+    // Guardar estado del editor (color seleccionado + tolerancia)
+    // No guardamos imagen - se recalcula siempre desde original
+    figuresState.history = figuresState.history.slice(0, figuresState.historyIndex + 1);
+    figuresState.history.push({
+        pickedColor: figuresState.pickedColor ? {...figuresState.pickedColor} : null,
+        tolerance: figuresState.tolerance
+    });
+    figuresState.historyIndex = figuresState.history.length - 1;
+    figuresElements.maskUndoBtn.disabled = figuresState.historyIndex <= 0;
+}
+
+function undoMask() {
+    if (figuresState.historyIndex <= 0) return;
+    figuresState.historyIndex--;
+    const state = figuresState.history[figuresState.historyIndex];
+    
+    figuresState.pickedColor = state.pickedColor ? {...state.pickedColor} : null;
+    figuresState.tolerance = state.tolerance;
+    
+    // Actualizar UI
+    figuresElements.toleranceSlider.value = figuresState.tolerance;
+    figuresElements.toleranceValue.textContent = figuresState.tolerance;
+    
+    if (figuresState.pickedColor) {
+        figuresElements.pickedColorBox.style.background = `rgb(${figuresState.pickedColor.r},${figuresState.pickedColor.g},${figuresState.pickedColor.b})`;
+        const lab = figuresState.pickedColor.lab;
+        figuresElements.pickedColorLab.textContent = lab ? `L: ${lab.L.toFixed(1)} a: ${lab.a.toFixed(1)} b: ${lab.b.toFixed(1)}` : 'L: — a: — b: —';
+        figuresElements.maskStatus.textContent = lab ? `Color seleccionado: L${lab.L.toFixed(0)} a${lab.a.toFixed(0)} b${lab.b.toFixed(0)}` : 'Haz clic en el color a ocultar';
+        figuresElements.maskStatus.style.color = 'var(--success-color)';
+        figuresElements.maskSaveBtn.disabled = false;
+    } else {
+        figuresElements.pickedColorBox.style.background = 'var(--surface)';
+        figuresElements.pickedColorLab.textContent = 'L: — a: — b: —';
+        figuresElements.maskStatus.textContent = 'Haz clic en el color a ocultar';
+        figuresElements.maskStatus.style.color = 'var(--primary-color)';
+        figuresElements.maskSaveBtn.disabled = true;
+    }
+    
+    // Reaplicar máscara con estado restaurado
+    applyMask();
+    
+    figuresElements.maskUndoBtn.disabled = figuresState.historyIndex <= 0;
+}
+
+// ========================================
+// COLOR PICKING Y MÁSCARA
+// ========================================
+
+function pickColorFromCanvas(e) {
+    if (!figuresState.maskCtx) return;
+    
+    const rect = figuresElements.maskCanvas.getBoundingClientRect();
+    const x = Math.floor(e.clientX - rect.left);
+    const y = Math.floor(e.clientY - rect.top);
+    
+    if (x < 0 || x >= figuresState.maskCanvas.width || y < 0 || y >= figuresState.maskCanvas.height) return;
+    
+    const pixel = figuresState.maskCtx.getImageData(x, y, 1, 1).data;
+    const r = pixel[0], g = pixel[1], b = pixel[2], a = pixel[3];
+    
+    if (a === 0) return; // Transparente
+    
+    // Guardar estado anterior en historial antes de cambiar
+    saveHistoryState();
+    
+    figuresState.pickedColor = { r, g, b };
+    const lab = rgbToLab(r, g, b);
+    figuresState.pickedColor.lab = lab;
+    
+    // Actualizar UI
+    figuresElements.pickedColorBox.style.background = `rgb(${r},${g},${b})`;
+    figuresElements.pickedColorLab.textContent = `L: ${lab.L.toFixed(1)} a: ${lab.a.toFixed(1)} b: ${lab.b.toFixed(1)}`;
+    figuresElements.maskStatus.textContent = `Color seleccionado: L${lab.L.toFixed(0)} a${lab.a.toFixed(0)} b${lab.b.toFixed(0)}`;
+    figuresElements.maskStatus.style.color = 'var(--success-color)';
+    figuresElements.maskSaveBtn.disabled = false;
+    
+    // Aplicar máscara automáticamente
+    applyMask();
+}
+
+function applyMask() {
+    if (!figuresState.pickedColor || !figuresState.originalImageData) return;
+    
+    const { r: tr, g: tg, b: tb } = figuresState.pickedColor;
+    const tolerance = figuresState.tolerance;
+    const tolSq = tolerance * tolerance;
+    
+    // SIEMPRE trabajar desde la imagen original limpia
+    const srcData = figuresState.originalImageData.data;
+    const dstData = figuresState.maskImageData.data;
+    const width = figuresState.maskCanvas.width;
+    const height = figuresState.maskCanvas.height;
+    
+    // Copiar original a máscara y aplicar filtro
+    for (let i = 0; i < srcData.length; i += 4) {
+        const r = srcData[i];
+        const g = srcData[i+1];
+        const b = srcData[i+2];
+        const a = srcData[i+3];
+        
+        dstData[i] = r;
+        dstData[i+1] = g;
+        dstData[i+2] = b;
+        dstData[i+3] = a;
+        
+        if (a === 0) continue;
+        
+        // Distancia euclidiana en RGB
+        const dr = r - tr, dg = g - tg, db = b - tb;
+        const distSq = dr*dr + dg*dg + db*db;
+        
+        if (distSq <= tolSq) {
+            // Enmascarar: blanco con alpha original
+            dstData[i] = 255;
+            dstData[i+1] = 255;
+            dstData[i+2] = 255;
+            // alpha se mantiene
+        }
+    }
+    
+    figuresState.maskCtx.putImageData(figuresState.maskImageData, 0, 0);
+    // NO guardar en historial aquí - la máscara se recalcula en tiempo real
+}
+
+// ========================================
+// CONVERSIÓN RGB → CIELAB (D65, 2° observer)
+// ========================================
+
+function rgbToLab(r, g, b) {
+    // sRGB a XYZ (D65)
+    let [sr, sg, sb] = [r, g, b].map(c => {
+        c = c / 255;
+        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    });
+    
+    // Matriz sRGB → XYZ (D65)
+    const X = sr * 0.4124564 + sg * 0.3575761 + sb * 0.1804375;
+    const Y = sr * 0.2126729 + sg * 0.7151522 + sb * 0.0721750;
+    const Z = sr * 0.0193339 + sg * 0.1191920 + sb * 0.9503041;
+    
+    // Normalizar por blanco D65
+    const Xn = 0.95047, Yn = 1.00000, Zn = 1.08883;
+    const fx = f(X / Xn);
+    const fy = f(Y / Yn);
+    const fz = f(Z / Zn);
+    
+    const L = 116 * fy - 16;
+    const a = 500 * (fx - fy);
+    const bVal = 200 * (fy - fz); // Renombrado de 'b' a 'bVal' para evitar el conflicto
+    
+    return { L: Math.max(0, Math.min(100, L)), a, b: bVal };
+}
+
+function f(t) {
+    return t > 0.008856 ? Math.cbrt(t) : (7.787 * t + 16 / 116);
+}
+
+// ========================================
+// GUARDAR FIGURA
+// ========================================
+
+async function saveCurrentFigure() {
+    if (!figuresState.pickedColor || !figuresState.sourceImage) {
+        alert('Primero selecciona un color en la imagen');
+        return;
+    }
+    
+    // Generar máscara final (imagen con zona enmascarada en blanco)
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = figuresState.maskCanvas.width;
+    maskCanvas.height = figuresState.maskCanvas.height;
+    const mctx = maskCanvas.getContext('2d');
+    mctx.putImageData(figuresState.maskImageData, 0, 0);
+    const maskDataUrl = maskCanvas.toDataURL('image/png');
+    
+    // Imagen original
+    const origCanvas = document.createElement('canvas');
+    origCanvas.width = figuresState.sourceImage.naturalWidth;
+    origCanvas.height = figuresState.sourceImage.naturalHeight;
+    const octx = origCanvas.getContext('2d');
+    octx.drawImage(figuresState.sourceImage, 0, 0);
+    const originalDataUrl = origCanvas.toDataURL('image/png');
+    
+    // Crear objeto figura
+    const figure = {
+        id: 'fig_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+        name: 'Figura ' + (figuresState.figures.length + 1),
+        original: originalDataUrl,
+        mask: maskDataUrl,
+        targetColor: {
+            rgb: { r: figuresState.pickedColor.r, g: figuresState.pickedColor.g, b: figuresState.pickedColor.b },
+            lab: figuresState.pickedColor.lab
+        },
+        tolerance: figuresState.tolerance,
+        createdAt: Date.now()
+    };
+    
+    try {
+        await saveFigureToDB(figure);
+        figuresState.figures.push(figure);
+        renderFiguresList();
+        
+        // Reset editor
+        resetMaskEditor();
+        
+        figuresElements.saveStatus.textContent = '✅ Guardada';
+        setTimeout(() => figuresElements.saveStatus.textContent = '', 2000);
+        addDebug(`💾 Figura guardada: ${figure.id} - Color objetivo: L${figure.targetColor.lab.L.toFixed(1)}`);
+        
+    } catch (err) {
+        addDebug('Error guardando figura: ' + err.message);
+        alert('Error al guardar: ' + err.message);
+    }
+}
+
+function resetMaskEditor() {
+    figuresElements.maskSection.classList.add('hidden');
+    figuresElements.filePreview.classList.add('hidden');
+    figuresElements.dropZone.querySelector('.drop-zone-content').style.display = 'flex';
+    figuresElements.filePreviewImg.src = '';
+    figuresElements.fileInput.value = '';
+    figuresState.sourceImage = null;
+    figuresState.pickedColor = null;
+    figuresState.maskImageData = null;
+    figuresState.history = [];
+    figuresState.historyIndex = -1;
+    figuresElements.pickedColorBox.style.background = 'var(--surface)';
+    figuresElements.pickedColorLab.textContent = 'L: — a: — b: —';
+    figuresElements.maskUndoBtn.disabled = true;
+    figuresElements.maskSaveBtn.disabled = true;
+}
+
+// ========================================
+// RENDER LISTA DE FIGURAS
+// ========================================
+
+function renderFiguresList() {
+    figuresElements.list.innerHTML = '';
+    
+    if (figuresState.figures.length === 0) {
+        figuresElements.empty.style.display = 'block';
+        return;
+    }
+    figuresElements.empty.style.display = 'none';
+    
+    figuresState.figures.forEach(fig => {
+        const item = document.createElement('div');
+        item.className = 'figure-item';
+        item.innerHTML = `
+            <img src="${fig.mask}" alt="${fig.name}">
+            <button class="figure-item-delete" data-id="${fig.id}" title="Eliminar">✕</button>
+        `;
+        item.querySelector('.figure-item-delete').addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteFigure(fig.id);
+        });
+        item.addEventListener('click', () => selectFigure(fig));
+        figuresElements.list.appendChild(item);
+    });
+}
+
+async function deleteFigure(id) {
+    if (!confirm('¿Eliminar esta figura?')) return;
+    try {
+        await deleteFigureFromDB(id);
+        figuresState.figures = figuresState.figures.filter(f => f.id !== id);
+        renderFiguresList();
+        addDebug('🗑️ Figura eliminada: ' + id);
+    } catch (err) {
+        alert('Error eliminando: ' + err.message);
+    }
+}
+
+function selectFigure(fig) {
+    // Para uso futuro en la partida
+    gameState.room.selectedFigure = fig;
+    addDebug(`🎯 Figura seleccionada para partida: ${fig.id}`);
+    // Feedback visual
+    document.querySelectorAll('.figure-item').forEach(el => el.classList.remove('figure-item-selected'));
+    event.currentTarget.classList.add('figure-item-selected');
+}
+
+// ========================================
+// EXPONER PARA PANTALLA DE JUEGO
+// ========================================
+
+window.figuresAPI = {
+    getFigures: () => figuresState.figures,
+    getSelectedFigure: () => gameState.room.selectedFigure,
+    loadFigures: loadFigures
+};
+
+// Integrar botón en waiting-host-screen (se hace en setupEventListeners principal)
+// Agregar al setupEventListeners existente:
+// elements.figuresBtn?.addEventListener('click', openFiguresScreen);
