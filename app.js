@@ -3,10 +3,9 @@
 // ========================================
 
 const AVATARS = [
-    '😀', '😎', '🤖', '👾', '🎮', '🎨',
-    '🌈', '⭐', '🌟', '💎', '🔮', '🎭',
-    '🎪', '🚀', '🛸', '🤿', '🏄', '🧙',
-    '🧝', '🦸', '🦹', '🧞', '🧚', '🧙‍♀️'
+    '😎', '🤖', '👾', 
+    '⭐', '🔮', '🛸', '🏄', '🧙',
+    '🧝', '💩', '🧚', '🧙‍♀️'
 ];
 
 const STORAGE_KEYS = {
@@ -583,9 +582,9 @@ function updateStartButton() {
     gameState.room.players.forEach(p => { if (p.confirmed) confirmed++; });
     
     elements.startGameBtn.disabled = confirmed < 2;
-    elements.minPlayersMsg.style.display = confirmed < 2 ? 'block' : 'none';
-    elements.minPlayersMsg.textContent = confirmed < 2 
-        ? `Mínimo 2 jugadores listos (${confirmed}/2)` : '';
+    // elements.minPlayersMsg.style.display = confirmed < 2 ? 'block' : 'none';
+    // elements.minPlayersMsg.textContent = confirmed < 2 
+    //    ? `Mínimo 2 jugadores listos (${confirmed}/2)` : '';
 }
 
 function copyInviteLink() {
@@ -632,9 +631,9 @@ window.debug = {
 // ========================================
 
 const CONFIG_DEFAULTS = {
-    rounds: { mode: 'few', custom: 5 },
-    duration: { mode: 'short', custom: 10 },
-    timeBonus: 'yes',
+    rounds: { mode: 'few', custom: 6 },
+    duration: { mode: 'long', custom: 9 },
+    timeBonus: 'sometimes',
     acceleration: 'yes',
     gyro: 'no'
 };

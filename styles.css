@@ -3,6 +3,8 @@
    ======================================== */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+.hidden { display: none !important; }
+
 :root {
     --primary-color: #4F46E5;
     --primary-hover: #4338CA;
@@ -58,7 +60,10 @@ body {
 .player-setup h2 { font-size: 1.25rem; font-weight: 600; margin-bottom: 1.5rem; }
 .avatar-selection { margin-bottom: 1.5rem; }
 .avatar-selection label { display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.75rem; }
-.avatar-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.75rem; }
+.avatar-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(45px, 1fr));
+    gap: 0.75rem; }
 .avatar-option {
     aspect-ratio: 1; border-radius: var(--radius-md);
     border: 3px solid transparent; cursor: pointer; transition: var(--transition);

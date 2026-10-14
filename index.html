@@ -14,19 +14,21 @@
             <div class="home-container">
                 <header class="home-header">
                     <h1>Adivina el Color</h1>
-                    <p class="subtitle">Juego multijugador en espacio CIELAB</p>
+                    <!--<p class="subtitle">Juego multijugador en espacio CIELAB</p>-->
                 </header>
                 <main class="home-main">
                     <div class="player-setup">
-                        <h2>Tu perfil</h2>
-                        <div class="avatar-selection">
-                            <label>Elige tu avatar</label>
-                            <div class="avatar-grid" id="avatar-grid"></div>
-                        </div>
+                        <!--<h2>Tu perfil</h2>-->
                         <div class="name-input">
                             <label for="player-name">Tu nombre</label>
                             <input type="text" id="player-name" placeholder="Escribe tu nombre" maxlength="20" required>
                         </div>
+                        <br>
+                        <div class="avatar-selection">
+                            <label>Elige tu avatar</label>
+                            <div class="avatar-grid" id="avatar-grid"></div>
+                        </div>
+                        
                     </div>
                     <div class="room-actions">
                         <button id="create-room-btn" class="btn btn-primary btn-large" disabled>
@@ -55,10 +57,10 @@
                         </div>
                     </div>
                     <button id="start-game-btn" class="btn btn-primary btn-large" disabled>
-                        <span class="btn-icon">🎮</span>
+                        <!--<span class="btn-icon">🎮</span>-->
                         Iniciar Partida
                     </button>
-                    <p class="min-players-msg">Se necesitan al menos 2 jugadores</p>
+                    <!--<p class="min-players-msg">Se necesitan al menos 2 jugadores</p>-->
                 </footer>
             </div>
         </div>
@@ -120,121 +122,88 @@
                     <form id="config-form">
                         
                         <!-- 1. CANTIDAD DE RONDAS -->
-                        <fieldset class="config-section">
-                            <legend>
-                                <span class="config-icon">🔢</span>
-                                Cantidad de rondas
-                            </legend>
+                        <div class="config-section">
+                        
+                            <h3><span class="config-icon">🔢</span>Cantidad de rondas</h3>
                             <div class="config-options" role="radiogroup" aria-label="Cantidad de rondas">
                                 <label class="config-option">
                                     <input type="radio" name="rounds-mode" value="few" checked>
-                                    <span class="option-label">Pocas</span>
-                                    <span class="option-desc">3–5 rondas (aleatorio)</span>
+                                    <span class="option-label">POCAS</span>
                                 </label>
                                 <label class="config-option">
                                     <input type="radio" name="rounds-mode" value="many">
-                                    <span class="option-label">Muchas</span>
-                                    <span class="option-desc">7–9 rondas (aleatorio)</span>
+                                    <span class="option-label">MUCHAS</span>
                                 </label>
                                 <label class="config-option">
                                     <input type="radio" name="rounds-mode" value="custom">
-                                    <span class="option-label">Yo decido</span>
-                                    <span class="option-desc">Número exacto</span>
+                                    <span class="option-label">YO DECIDO</span>
                                 </label>
                             </div>
                             <div class="config-custom-input hidden" id="rounds-custom">
                                 <label for="rounds-custom-value">Número de rondas</label>
                                 <input type="number" id="rounds-custom-value" min="1" max="50" value="5" step="1" disabled>
                             </div>
-                        </fieldset>
 
-                        <!-- 2. DURACIÓN -->
-                        <fieldset class="config-section">
-                            <legend>
-                                <span class="config-icon">⏱️</span>
-                                Duración por ronda
-                            </legend>
+                            <!-- 2. DURACIÓN -->
+                            <h3><span class="config-icon">⏱️</span> Duración por ronda</h3>
                             <div class="config-options" role="radiogroup" aria-label="Duración">
                                 <label class="config-option">
-                                    <input type="radio" name="duration-mode" value="short" checked>
-                                    <span class="option-label">Corta</span>
-                                    <span class="option-desc">6–10 seg (aleatorio)</span>
+                                    <input type="radio" name="duration-mode" value="short">
+                                    <span class="option-label">CORTA</span>
                                 </label>
                                 <label class="config-option">
-                                    <input type="radio" name="duration-mode" value="long">
-                                    <span class="option-label">Larga</span>
-                                    <span class="option-desc">13–18 seg (aleatorio)</span>
+                                    <input type="radio" name="duration-mode" value="long" checked>
+                                    <span class="option-label">LARGA</span>
                                 </label>
                                 <label class="config-option">
                                     <input type="radio" name="duration-mode" value="custom">
-                                    <span class="option-label">Yo decido</span>
-                                    <span class="option-desc">Segundos exactos</span>
+                                    <span class="option-label">YO DECIDO</span>
                                 </label>
                             </div>
                             <div class="config-custom-input hidden" id="duration-custom">
                                 <label for="duration-custom-value">Segundos por ronda</label>
                                 <input type="number" id="duration-custom-value" min="3" max="120" value="10" step="1" disabled>
                             </div>
-                        </fieldset>
 
-                        <!-- 3. BONIFICACIÓN POR TIEMPO -->
-                        <fieldset class="config-section">
-                            <legend>
-                                <span class="config-icon">⚡</span>
-                                Bonificación por tiempo
-                            </legend>
-                            <p class="config-help">+20% máx. si terminas antes. Se reduce proporcional al tiempo restante.</p>
+                            <!-- 3. BONIFICACIÓN POR TIEMPO -->
+                            <h3><span class="config-icon">⚡</span> Bonificación por tiempo</h3>
+                            <!--<p class="config-help">+20% máx. si terminas antes. Se reduce proporcional al tiempo restante.</p> --> 
                             <div class="config-options" role="radiogroup" aria-label="Bonificación por tiempo">
                                 <label class="config-option">
-                                    <input type="radio" name="timebonus-mode" value="yes" checked>
-                                    <span class="option-label">Sí</span>
-                                    <span class="option-desc">Siempre activa</span>
+                                    <input type="radio" name="timebonus-mode" value="yes">
+                                    <span class="option-label">SI</span>
                                 </label>
                                 <label class="config-option">
                                     <input type="radio" name="timebonus-mode" value="no">
-                                    <span class="option-label">No</span>
-                                    <span class="option-desc">Nunca activa</span>
+                                    <span class="option-label">NO</span>
                                 </label>
                                 <label class="config-option">
-                                    <input type="radio" name="timebonus-mode" value="sometimes">
-                                    <span class="option-label">A veces</span>
-                                    <span class="option-desc">50% probabilidad por ronda</span>
+                                    <input type="radio" name="timebonus-mode" value="sometimes" checked>
+                                    <span class="option-label">A VECES</span>
                                 </label>
                             </div>
-                        </fieldset>
 
-                        <!-- 4. ACELERACIÓN -->
-                        <fieldset class="config-section">
-                            <legend>
-                                <span class="config-icon">🚀</span>
-                                Aceleración (reducción de tiempo)
-                            </legend>
-                            <p class="config-help">Desde ronda 3: ×0.86 cada ronda. "A veces": 33% prob. ×0.67 cualquier ronda.</p>
+                            <!-- 4. ACELERACIÓN -->
+                            <h3><span class="config-icon">🚀</span> Aceleración</h3>
+                            <!-- <p class="config-help">Desde ronda 3: ×0.86 cada ronda. "A veces": 33% prob. ×0.67 cualquier ronda.</p> --> 
                             <div class="config-options" role="radiogroup" aria-label="Aceleración">
                                 <label class="config-option">
                                     <input type="radio" name="accel-mode" value="yes" checked>
-                                    <span class="option-label">Sí</span>
-                                    <span class="option-desc">Progresiva desde ronda 3</span>
+                                    <span class="option-label">SI</span>
                                 </label>
                                 <label class="config-option">
                                     <input type="radio" name="accel-mode" value="no">
-                                    <span class="option-label">No</span>
-                                    <span class="option-desc">Tiempo constante</span>
+                                    <span class="option-label">NO</span>
                                 </label>
                                 <label class="config-option">
                                     <input type="radio" name="accel-mode" value="sometimes">
-                                    <span class="option-label">A veces</span>
-                                    <span class="option-desc">33% prob. ×0.67 aleatorio</span>
+                                    <span class="option-label">A VECES</span>
                                 </label>
                             </div>
-                        </fieldset>
-
-                        <!-- 5. GIROSCOPIO -->
-                        <fieldset class="config-section" id="gyro-section">
-                            <legend>
-                                <span class="config-icon">📱</span>
-                                Modo Giroscopio
-                            </legend>
+                        </div>
+                            <!-- 5. GIROSCOPIO      (deshabilitada temporalmente)-->
+                        <div class="config-section hidden" id="gyro-section">
+                            <h3><span class="config-icon">📱</span> Modo Giroscopio</h3>
                             <p class="config-help" id="gyro-help-text">Una perilla (L*) + péndulo físico. 25% prob. si "A veces".</p>
                             <div class="config-options" role="radiogroup" aria-label="Giroscopio">
                                 <label class="config-option" id="gyro-yes-option">
@@ -256,7 +225,7 @@
                             <div class="gyro-warning hidden" id="gyro-warning">
                                 ⚠️ Giroscopio no disponible en este dispositivo. Opción deshabilitada.
                             </div>
-                        </fieldset>
+                        </div>
 
                     </form>
                 </main>
