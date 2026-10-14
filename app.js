@@ -57,6 +57,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderAvatars('guest-avatar-grid');
     updateCreateButton();
     updateGuestConfirmButton();
+
+    // Cargar las figuras guardadas o locales al iniciar la app
+    try {
+        await loadFigures();
+    } catch (e) {
+        addDebug('⚠️ No se pudieron precargar las figuras al iniciar');
+    }
     
     // 1. Si hay hostId en URL → es invitado, conectar YA
     extractInviteHostId();
@@ -2076,6 +2083,10 @@ async function startGame() {
 }
 
 async function loadAllFigures() {
+    // Si aún no se han cargado las figuras, cargarlas de emergencia
+    if (!figuresState.figures || figuresState.figures.length === 0) {
+        await loadFigures();
+    }
     const preloaded = window.figuresAPI?.getFigures() || [];
     const localFigures = figuresState.figures || [];
     gameState.allFigures = [...preloaded, ...localFigures];
