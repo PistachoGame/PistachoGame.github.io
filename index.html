@@ -41,21 +41,14 @@
         <!-- 2. WAITING HOST (crea sala, comparte enlace, ve jugadores, configura, inicia) -->
         <div id="waiting-host-screen" class="screen hidden">
             <div class="waiting-container">
-                <header class="waiting-header">
-                    <button id="settings-btn" class="icon-btn" title="Configuración">⚙️</button>
-                    <h1>Sala de Espera</h1>
-                    <div class="room-code-display">
-                        <span id="room-code">—</span>
-                        <span class="code-label">Código</span>
-                    </div>
-                </header>
+                <button id="settings-btn" class="icon-btn floating-settings" title="Configuración">⚙️</button>
                 <main class="waiting-main">
                     <div class="ad-placeholder" id="ad-placeholder">publicidad aqui</div>
+                    <p class="waiting-players-text">esperando jugadores</p>
                     <div class="players-list" id="players-list"></div>
                 </main>
                 <footer class="waiting-footer">
                     <div class="invite-link-container">
-                        <label>Enlace para compartir:</label>
                         <div class="invite-link-row">
                             <input type="text" id="invite-link" readonly placeholder="Creando sala...">
                             <button id="copy-link-btn" class="btn btn-secondary" title="Copiar">📋</button>
@@ -151,7 +144,7 @@
                             </div>
                             <div class="config-custom-input hidden" id="rounds-custom">
                                 <label for="rounds-custom-value">Número de rondas</label>
-                                <input type="number" id="rounds-custom-value" min="1" max="50" value="5" step="1">
+                                <input type="number" id="rounds-custom-value" min="1" max="50" value="5" step="1" disabled>
                             </div>
                         </fieldset>
 
@@ -180,7 +173,7 @@
                             </div>
                             <div class="config-custom-input hidden" id="duration-custom">
                                 <label for="duration-custom-value">Segundos por ronda</label>
-                                <input type="number" id="duration-custom-value" min="3" max="120" value="10" step="1">
+                                <input type="number" id="duration-custom-value" min="3" max="120" value="10" step="1" disabled>
                             </div>
                         </fieldset>
 
@@ -237,7 +230,7 @@
                         </fieldset>
 
                         <!-- 5. GIROSCOPIO -->
-                        <fieldset class="config-section">
+                        <fieldset class="config-section" id="gyro-section">
                             <legend>
                                 <span class="config-icon">📱</span>
                                 Modo Giroscopio
@@ -261,7 +254,7 @@
                                 </label>
                             </div>
                             <div class="gyro-warning hidden" id="gyro-warning">
-                                ⚠️ Algunos dispositivos no tienen giroscopio. La opción se desactivará automáticamente para todos.
+                                ⚠️ Giroscopio no disponible en este dispositivo. Opción deshabilitada.
                             </div>
                         </fieldset>
 

@@ -60,7 +60,6 @@ function cacheElements() {
     // Waiting Host
     elements.waitingHostScreen = document.getElementById('waiting-host-screen');
     elements.settingsBtn = document.getElementById('settings-btn');
-    elements.roomCodeDisplay = document.getElementById('room-code');
     elements.inviteLinkInput = document.getElementById('invite-link');
     elements.copyLinkBtn = document.getElementById('copy-link-btn');
     elements.adPlaceholder = document.getElementById('ad-placeholder');
@@ -251,7 +250,6 @@ async function handleCreateRoom() {
         });
         
         showScreen('waiting-host-screen');
-        elements.roomCodeDisplay.textContent = gameState.room.code;
         
         const base = window.location.origin + window.location.pathname;
         const fullLink = `${base}?host=${encodeURIComponent(gameState.player.id)}`;
@@ -695,42 +693,37 @@ function toggleCustomInput(type) {
         : document.querySelector('input[name="duration-mode"]:checked').value;
     
     const customDiv = type === 'rounds' ? configElements.roundsCustom : configElements.durationCustom;
-    customDiv.classList.toggle('hidden', mode !== 'custom');
+    const customInput = type === 'rounds' ? configElements.roundsCustomValue : configElements.durationCustomValue;
+    const isCustom = mode === 'custom';
+    
+    customDiv.classList.toggle('hidden', !isCustom);
+    customInput.disabled = !isCustom;
 }
 
 function checkGyroscopeSupport() {
     const hasOrientationSupport = 'DeviceOrientationEvent' in window;
     gameState.room.config._gyroSupported = hasOrientationSupport;
     
+    const gyroSection = document.getElementById('gyro-section');
+    
     if (!hasOrientationSupport) {
-        disableGyroOptions();
-        configElements.gyroWarning.classList.remove('hidden');
-        configElements.gyroWarning.textContent = '⚠️ Tu navegador no soporta giroscopio. Opción deshabilitada.';
+        // Ocultar toda la sección de giroscopio si no hay soporte
+        gyroSection.classList.add('gyro-disabled');
+        gameState.room.config.gyro = 'no';
     } else {
-        configElements.gyroWarning.classList.add('hidden');
+        gyroSection.classList.remove('gyro-disabled');
     }
 }
 
-function disableGyroOptions() {
-    configElements.gyroMode.forEach(r => {
-        r.disabled = r.value !== 'no';
-        if (r.value !== 'no') {
-            r.parentElement.style.opacity = '0.5';
-            r.parentElement.style.cursor = 'not-allowed';
-        }
-    });
-    document.querySelector('input[name="gyro-mode"][value="no"]').checked = true;
-}
-
 function updateGyroWarning() {
-    const selected = document.querySelector('input[name="gyro-mode"]:checked').value;
     const supported = gameState.room.config._gyroSupported;
+    const gyroSection = document.getElementById('gyro-section');
     
-    if (!supported && selected !== 'no') {
-        configElements.gyroWarning.classList.remove('hidden');
-        configElements.gyroWarning.textContent = '⚠️ Giroscopio no disponible. Forzando "No".';
-        document.querySelector('input[name="gyro-mode"][value="no"]').checked = true;
+    if (!supported) {
+        gyroSection.classList.add('gyro-disabled');
+        gameState.room.config.gyro = 'no';
     } else {
+        gyroSection.classList.remove('gyro-disabled');
         configElements.gyroWarning.classList.add('hidden');
     }
 }
@@ -748,8 +741,12 @@ function loadConfigToUI() {
     
     document.querySelector(`input[name="timebonus-mode"][value="${c.timeBonus}"]`).checked = true;
     document.querySelector(`input[name="accel-mode"][value="${c.acceleration}"]`).checked = true;
-    document.querySelector(`input[name="gyro-mode"][value="${c.gyro}"]`).checked = true;
-    updateGyroWarning();
+    
+    // Solo cargar gyro si la sección no está oculta
+    const gyroSection = document.getElementById('gyro-section');
+    if (!gyroSection.classList.contains('gyro-disabled')) {
+        document.querySelector(`input[name="gyro-mode"][value="${c.gyro}"]`).checked = true;
+    }
 }
 
 function saveConfig() {
