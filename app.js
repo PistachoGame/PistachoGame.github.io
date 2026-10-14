@@ -446,7 +446,7 @@ function handlePeerMessage(from, data) {
         case 'player-joined': handlePlayerJoined(data); break;
         case 'player-left': handlePlayerLeft(data); break;
         case 'player-info': handlePlayerInfo(from, data); break;
-        case 'start-game': handleStartGameSignal(); break;
+        case 'start-game': handleStartGameSignal(data); break;
         case 'settings': handleSettingsSignal(data); break;
     }
 }
@@ -601,17 +601,7 @@ function copyInviteLink() {
     }).catch(() => prompt('Copia:', link));
 }
 
-function handleSettings() { alert('Configuración - Próximamente'); }
-
-function handleStartGame() {
-    let confirmed = 0;
-    gameState.room.players.forEach(p => { if (p.confirmed) confirmed++; });
-    if (confirmed < 2) return;
-    
-    broadcast('start-game', {});
-    addDebug('🚀 Iniciando partida');
-    alert('¡Partida iniciada! Próximamente pantalla de juego');
-}
+function handleSettings() { openConfigScreen(); }
 
 function handlePeerDisconnect(id) {
     addDebug(`🔌 Desconectado: ${id.substring(0,8)}`);
@@ -637,4 +627,313 @@ window.debug = {
     conns: () => gameState.connections,
     players: () => Array.from(gameState.room.players.values()),
     log: () => gameState.debugInfo
+};
+
+// ========================================
+// CONFIGURACIÓN DE PARTIDA
+// ========================================
+
+const CONFIG_DEFAULTS = {
+    rounds: { mode: 'few', custom: 5 },
+    duration: { mode: 'short', custom: 10 },
+    timeBonus: 'yes',
+    acceleration: 'yes',
+    gyro: 'no'
+};
+
+// Estado de config en gameState.room.config
+gameState.room.config = { ...CONFIG_DEFAULTS };
+
+// Elementos de config
+const configElements = {};
+
+function initConfigScreen() {
+    cacheConfigElements();
+    setupConfigListeners();
+    loadConfigToUI();
+    checkGyroscopeSupport();
+}
+
+function cacheConfigElements() {
+    configElements.backBtn = document.getElementById('config-back-btn');
+    configElements.saveBtn = document.getElementById('config-save-btn');
+    configElements.saveStatus = document.getElementById('config-save-status');
+    configElements.form = document.getElementById('config-form');
+    
+    configElements.roundsMode = document.querySelectorAll('input[name="rounds-mode"]');
+    configElements.durationMode = document.querySelectorAll('input[name="duration-mode"]');
+    configElements.timeBonusMode = document.querySelectorAll('input[name="timebonus-mode"]');
+    configElements.accelMode = document.querySelectorAll('input[name="accel-mode"]');
+    configElements.gyroMode = document.querySelectorAll('input[name="gyro-mode"]');
+    
+    configElements.roundsCustom = document.getElementById('rounds-custom');
+    configElements.roundsCustomValue = document.getElementById('rounds-custom-value');
+    configElements.durationCustom = document.getElementById('duration-custom');
+    configElements.durationCustomValue = document.getElementById('duration-custom-value');
+    
+    configElements.gyroWarning = document.getElementById('gyro-warning');
+    configElements.gyroYesOpt = document.getElementById('gyro-yes-option');
+    configElements.gyroSometimesOpt = document.getElementById('gyro-sometimes-option');
+}
+
+function setupConfigListeners() {
+    configElements.backBtn.addEventListener('click', () => {
+        showScreen('waiting-host-screen');
+    });
+    
+    configElements.saveBtn.addEventListener('click', saveConfig);
+    
+    configElements.roundsMode.forEach(r => r.addEventListener('change', () => toggleCustomInput('rounds')));
+    configElements.durationMode.forEach(r => r.addEventListener('change', () => toggleCustomInput('duration')));
+    
+    configElements.gyroMode.forEach(r => r.addEventListener('change', updateGyroWarning));
+}
+
+function toggleCustomInput(type) {
+    const mode = type === 'rounds' 
+        ? document.querySelector('input[name="rounds-mode"]:checked').value
+        : document.querySelector('input[name="duration-mode"]:checked').value;
+    
+    const customDiv = type === 'rounds' ? configElements.roundsCustom : configElements.durationCustom;
+    customDiv.classList.toggle('hidden', mode !== 'custom');
+}
+
+function checkGyroscopeSupport() {
+    const hasOrientationSupport = 'DeviceOrientationEvent' in window;
+    gameState.room.config._gyroSupported = hasOrientationSupport;
+    
+    if (!hasOrientationSupport) {
+        disableGyroOptions();
+        configElements.gyroWarning.classList.remove('hidden');
+        configElements.gyroWarning.textContent = '⚠️ Tu navegador no soporta giroscopio. Opción deshabilitada.';
+    } else {
+        configElements.gyroWarning.classList.add('hidden');
+    }
+}
+
+function disableGyroOptions() {
+    configElements.gyroMode.forEach(r => {
+        r.disabled = r.value !== 'no';
+        if (r.value !== 'no') {
+            r.parentElement.style.opacity = '0.5';
+            r.parentElement.style.cursor = 'not-allowed';
+        }
+    });
+    document.querySelector('input[name="gyro-mode"][value="no"]').checked = true;
+}
+
+function updateGyroWarning() {
+    const selected = document.querySelector('input[name="gyro-mode"]:checked').value;
+    const supported = gameState.room.config._gyroSupported;
+    
+    if (!supported && selected !== 'no') {
+        configElements.gyroWarning.classList.remove('hidden');
+        configElements.gyroWarning.textContent = '⚠️ Giroscopio no disponible. Forzando "No".';
+        document.querySelector('input[name="gyro-mode"][value="no"]').checked = true;
+    } else {
+        configElements.gyroWarning.classList.add('hidden');
+    }
+}
+
+function loadConfigToUI() {
+    const c = gameState.room.config;
+    
+    document.querySelector(`input[name="rounds-mode"][value="${c.rounds.mode}"]`).checked = true;
+    configElements.roundsCustomValue.value = c.rounds.custom;
+    toggleCustomInput('rounds');
+    
+    document.querySelector(`input[name="duration-mode"][value="${c.duration.mode}"]`).checked = true;
+    configElements.durationCustomValue.value = c.duration.custom;
+    toggleCustomInput('duration');
+    
+    document.querySelector(`input[name="timebonus-mode"][value="${c.timeBonus}"]`).checked = true;
+    document.querySelector(`input[name="accel-mode"][value="${c.acceleration}"]`).checked = true;
+    document.querySelector(`input[name="gyro-mode"][value="${c.gyro}"]`).checked = true;
+    updateGyroWarning();
+}
+
+function saveConfig() {
+    const c = gameState.room.config;
+    
+    const roundsMode = document.querySelector('input[name="rounds-mode"]:checked').value;
+    const durationMode = document.querySelector('input[name="duration-mode"]:checked').value;
+    
+    if (roundsMode === 'custom') {
+        const val = parseInt(configElements.roundsCustomValue.value);
+        if (isNaN(val) || val < 1 || val > 50) return alert('Rondas: 1-50');
+        c.rounds.custom = val;
+    }
+    c.rounds.mode = roundsMode;
+    
+    if (durationMode === 'custom') {
+        const val = parseInt(configElements.durationCustomValue.value);
+        if (isNaN(val) || val < 3 || val > 120) return alert('Duración: 3-120 seg');
+        c.duration.custom = val;
+    }
+    c.duration.mode = durationMode;
+    
+    c.timeBonus = document.querySelector('input[name="timebonus-mode"]:checked').value;
+    c.acceleration = document.querySelector('input[name="accel-mode"]:checked').value;
+    c.gyro = document.querySelector('input[name="gyro-mode"]:checked').value;
+    
+    if (!c._gyroSupported && c.gyro !== 'no') {
+        c.gyro = 'no';
+        loadConfigToUI();
+        return alert('Giroscopio no soportado. Forzado a "No".');
+    }
+    
+    configElements.saveStatus.textContent = '✅ Guardado';
+    setTimeout(() => configElements.saveStatus.textContent = '', 2000);
+    
+    addDebug(`⚙️ Config guardada: ${JSON.stringify(c)}`);
+    showScreen('waiting-host-screen');
+}
+
+function openConfigScreen() {
+    if (!gameState.player.isHost) return;
+    initConfigScreen();
+    showScreen('config-screen');
+}
+
+// ========================================
+// FUNCIONES DE CÁLCULO SEGÚN CONFIG
+// ========================================
+
+function calculateTotalRounds() {
+    const { mode, custom } = gameState.room.config.rounds;
+    switch (mode) {
+        case 'few': return Math.floor(Math.random() * 3) + 3;
+        case 'many': return Math.floor(Math.random() * 3) + 7;
+        case 'custom': return custom;
+        default: return 5;
+    }
+}
+
+function calculateBaseRoundDuration() {
+    const { mode, custom } = gameState.room.config.duration;
+    switch (mode) {
+        case 'short': return Math.floor(Math.random() * 5) + 6;
+        case 'long': return Math.floor(Math.random() * 6) + 13;
+        case 'custom': return custom;
+        default: return 10;
+    }
+}
+
+function isTimeBonusActive(roundNumber) {
+    const mode = gameState.room.config.timeBonus;
+    if (mode === 'yes') return true;
+    if (mode === 'no') return false;
+    return Math.random() < 0.5;
+}
+
+function calculateRoundDuration(roundNumber, baseDuration) {
+    const mode = gameState.room.config.acceleration;
+    
+    if (mode === 'no') return baseDuration;
+    
+    if (mode === 'yes') {
+        if (roundNumber <= 2) return baseDuration;
+        let duration = baseDuration;
+        for (let r = 3; r <= roundNumber; r++) {
+            duration *= 0.86;
+        }
+        return Math.max(3, Math.round(duration * 10) / 10);
+    }
+    
+    if (mode === 'sometimes') {
+        let duration = baseDuration;
+        for (let r = 1; r <= roundNumber; r++) {
+            const seeded = Math.sin(roundNumber * 1000 + r * 100) * 10000;
+            const rand = seeded - Math.floor(seeded);
+            if (rand < 0.33) {
+                duration *= 0.67;
+            }
+        }
+        return Math.max(3, Math.round(duration * 10) / 10);
+    }
+    
+    return baseDuration;
+}
+
+function calculateTimeBonus(baseScore, timeRemaining, totalTime) {
+    if (totalTime <= 0) return 0;
+    const ratio = Math.max(0, Math.min(1, timeRemaining / totalTime));
+    const bonusPercent = ratio * 0.2;
+    return Math.round(baseScore * bonusPercent);
+}
+
+function isGyroModeActive(roundNumber) {
+    const mode = gameState.room.config.gyro;
+    if (mode === 'yes') return true;
+    if (mode === 'no') return false;
+    const seeded = Math.sin(roundNumber * 2000 + 42) * 10000;
+    const rand = seeded - Math.floor(seeded);
+    return rand < 0.25;
+}
+
+function precalculateRoundDurations() {
+    const totalRounds = calculateTotalRounds();
+    const baseDuration = calculateBaseRoundDuration();
+    const durations = [];
+    
+    for (let r = 1; r <= totalRounds; r++) {
+        const dur = calculateRoundDuration(r, baseDuration);
+        const bonus = isTimeBonusActive(r);
+        const gyro = isGyroModeActive(r);
+        durations.push({ round: r, duration: dur, timeBonus: bonus, gyro: gyro });
+    }
+    
+    gameState.room.roundDurations = durations;
+    gameState.room.totalRounds = totalRounds;
+    gameState.room.baseDuration = baseDuration;
+    
+    addDebug(`📊 Precalculado: ${totalRounds} rondas, base ${baseDuration}s`);
+    durations.forEach(d => addDebug(`  R${d.round}: ${d.duration}s ${d.timeBonus?'⚡':''} ${d.gyro?'📱':''}`));
+    
+    return durations;
+}
+
+// ========================================
+// INTEGRACIÓN CON INICIO DE PARTIDA
+// ========================================
+
+function handleStartGame() {
+    let confirmed = 0;
+    gameState.room.players.forEach(p => { if (p.confirmed) confirmed++; });
+    if (confirmed < 2) return;
+    
+    precalculateRoundDurations();
+    
+    broadcast('start-game', {
+        config: gameState.room.config,
+        roundDurations: gameState.room.roundDurations,
+        totalRounds: gameState.room.totalRounds,
+        baseDuration: gameState.room.baseDuration
+    });
+    
+    addDebug('🚀 Iniciando partida con config:', gameState.room.config);
+    alert('¡Partida iniciada! Config enviada a todos. Próximamente: pantalla de juego');
+}
+
+function handleStartGameSignal(data) {
+    addDebug('🎮 Inicio recibido con config');
+    
+    gameState.room.config = data.config;
+    gameState.room.roundDurations = data.roundDurations;
+    gameState.room.totalRounds = data.totalRounds;
+    gameState.room.baseDuration = data.baseDuration;
+    
+    alert('¡Partida iniciada! Config recibida. Próximamente: pantalla de juego');
+}
+
+// Exponer para pantalla de juego
+window.gameConfig = {
+    calculateTotalRounds,
+    calculateBaseRoundDuration,
+    calculateRoundDuration,
+    isTimeBonusActive,
+    calculateTimeBonus,
+    isGyroModeActive,
+    precalculateRoundDurations,
+    getConfig: () => gameState.room.config
 };
