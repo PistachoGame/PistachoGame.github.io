@@ -1142,6 +1142,7 @@ async function loadLocalFigureFromConfig(config) {
             const sx = (img.naturalWidth - minDim) / 2;
             const sy = (img.naturalHeight - minDim) / 2;
 
+            // 1. Crear canvas para la imagen original cuadrada
             const canvas = document.createElement('canvas');
             canvas.width = size;
             canvas.height = size;
@@ -1149,11 +1150,49 @@ async function loadLocalFigureFromConfig(config) {
             ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
             const originalDataUrl = canvas.toDataURL('image/png');
             
+            // 2. Crear canvas para la máscara aplicando el color objetivo y tolerancia
             const maskCanvas = document.createElement('canvas');
             maskCanvas.width = size;
             maskCanvas.height = size;
             const mctx = maskCanvas.getContext('2d');
             mctx.drawImage(canvas, 0, 0);
+            
+            const origImgData = ctx.getImageData(0, 0, size, size);
+            const maskImgData = mctx.getImageData(0, 0, size, size);
+            const srcData = origImgData.data;
+            const dstData = maskImgData.data;
+            
+            const targetLab = config.lab || { L: 85, a: 10, b: 80 };
+            const targetRgb = labToRgb(targetLab.L, targetLab.a, targetLab.b);
+            const tolerance = config.tolerance || 50;
+            const tolSq = tolerance * tolerance;
+            
+            for (let i = 0; i < srcData.length; i += 4) {
+                const r = srcData[i];
+                const g = srcData[i+1];
+                const b = srcData[i+2];
+                const a = srcData[i+3];
+                
+                if (a === 0) continue;
+                
+                const dr = r - targetRgb.r;
+                const dg = g - targetRgb.g;
+                const db = b - targetRgb.b;
+                const distSq = dr*dr + dg*dg + db*db;
+                
+                if (distSq <= tolSq) {
+                    // Píxeles que coinciden con el color se vuelven blancos en la máscara
+                    dstData[i] = 255;
+                    dstData[i+1] = 255;
+                    dstData[i+2] = 255;
+                    dstData[i+3] = 255;
+                } else {
+                    // El resto se vuelve transparente para ocultarlo
+                    dstData[i+3] = 0;
+                }
+            }
+            
+            mctx.putImageData(maskImgData, 0, 0);
             const maskDataUrl = maskCanvas.toDataURL('image/png');
             
             const figure = {
@@ -1162,10 +1201,10 @@ async function loadLocalFigureFromConfig(config) {
                 original: originalDataUrl,
                 mask: maskDataUrl,
                 targetColor: {
-                    rgb: config.lab ? labToRgb(config.lab.L, config.lab.a, config.lab.b) : { r: 255, g: 255, b: 0 },
-                    lab: config.lab || { L: 50, a: 0, b: 0 }
+                    rgb: targetRgb,
+                    lab: targetLab
                 },
-                tolerance: config.tolerance || 50,
+                tolerance: tolerance,
                 isLocal: true,
                 localUrl: config.url,
                 createdAt: Date.now()
