@@ -533,11 +533,12 @@ function connectToHost(hostId) {
 // MENSAJES P2P
 // ========================================
 
+// En handlePeerMessage, actualiza gameTypes para que procese todos los mensajes del juego:
 function handlePeerMessage(from, data) {
     addDebug(`📨 ${from.substring(0,8)}: ${data.type}`);
     
-    // Game messages
-    const gameTypes = ['player-lab', 'start-round', 'end-round', 'game-ended'];
+    // Game messages (incluyendo figure-data, round-results y game-results)
+    const gameTypes = ['player-lab', 'start-round', 'end-round', 'game-ended', 'figure-data', 'round-results', 'game-results'];
     if (gameTypes.includes(data.type)) {
         handleGameMessage(from, data);
         return;
@@ -1136,19 +1137,23 @@ async function loadLocalFigureFromConfig(config) {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
+            const size = 500;
+            const minDim = Math.min(img.naturalWidth, img.naturalHeight);
+            const sx = (img.naturalWidth - minDim) / 2;
+            const sy = (img.naturalHeight - minDim) / 2;
+
             const canvas = document.createElement('canvas');
-            canvas.width = img.naturalWidth;
-            canvas.height = img.naturalHeight;
+            canvas.width = size;
+            canvas.height = size;
             const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0);
+            ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
             const originalDataUrl = canvas.toDataURL('image/png');
             
-            // Crear máscara blanca simple (se editará después si se quiere)
             const maskCanvas = document.createElement('canvas');
-            maskCanvas.width = img.naturalWidth;
-            maskCanvas.height = img.naturalHeight;
+            maskCanvas.width = size;
+            maskCanvas.height = size;
             const mctx = maskCanvas.getContext('2d');
-            mctx.drawImage(img, 0, 0);
+            mctx.drawImage(canvas, 0, 0);
             const maskDataUrl = maskCanvas.toDataURL('image/png');
             
             const figure = {
@@ -1167,7 +1172,7 @@ async function loadLocalFigureFromConfig(config) {
             };
             
             figuresState.figures.push(figure);
-            saveFigureToDB(figure); // Guardar también en IndexedDB para consistencia
+            saveFigureToDB(figure);
             resolve();
         };
         img.onerror = () => {
@@ -1493,38 +1498,28 @@ function setupMaskEditor(img) {
     const canvas = figuresElements.maskCanvas;
     const ctx = canvas.getContext('2d');
     
-    // Canvas FIJO de 600x500 - la imagen se centra y escala para llenar
-    const canvasW = 600;
-    const canvasH = 500;
-    canvas.width = canvasW;
-    canvas.height = canvasH;
+    const size = 500;
+    canvas.width = size;
+    canvas.height = size;
     
-    // Calcular escala para que la imagen cubra todo el canvas (cover)
-    const scale = Math.max(canvasW / img.naturalWidth, canvasH / img.naturalHeight);
-    const drawW = Math.round(img.naturalWidth * scale);
-    const drawH = Math.round(img.naturalHeight * scale);
-    const drawX = Math.round((canvasW - drawW) / 2);
-    const drawY = Math.round((canvasH - drawH) / 2);
+    // Recorte cuadrado centrado (cover)
+    const minDim = Math.min(img.naturalWidth, img.naturalHeight);
+    const sx = (img.naturalWidth - minDim) / 2;
+    const sy = (img.naturalHeight - minDim) / 2;
     
-    // Fondo negro (para transparencias)
     ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, canvasW, canvasH);
-    
-    // Dibujar imagen centrada y escalada (cover)
-    ctx.drawImage(img, drawX, drawY, drawW, drawH);
+    ctx.fillRect(0, 0, size, size);
+    ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
     
     figuresState.maskCanvas = canvas;
     figuresState.maskCtx = ctx;
     
-    // GUARDAR IMAGEN ORIGINAL LIMPIA (sin máscara) - base para recalcular
-    figuresState.originalImageData = ctx.getImageData(0, 0, canvasW, canvasH);
-    figuresState.maskImageData = ctx.getImageData(0, 0, canvasW, canvasH);
+    figuresState.originalImageData = ctx.getImageData(0, 0, size, size);
+    figuresState.maskImageData = ctx.getImageData(0, 0, size, size);
     
-    // Sincronizar slider de tolerancia con el valor actual
     figuresElements.toleranceSlider.value = figuresState.tolerance;
     figuresElements.toleranceValue.textContent = figuresState.tolerance;
     
-    // Guardar estado inicial en historial (solo la imagen original)
     saveHistoryState();
 }
 
@@ -1696,23 +1691,27 @@ async function saveCurrentFigure() {
         return;
     }
     
-    // Generar máscara final (imagen con zona enmascarada en blanco)
+    const size = 500;
+
+    // Máscara cuadrada
     const maskCanvas = document.createElement('canvas');
-    maskCanvas.width = figuresState.maskCanvas.width;
-    maskCanvas.height = figuresState.maskCanvas.height;
+    maskCanvas.width = size;
+    maskCanvas.height = size;
     const mctx = maskCanvas.getContext('2d');
     mctx.putImageData(figuresState.maskImageData, 0, 0);
     const maskDataUrl = maskCanvas.toDataURL('image/png');
     
-    // Imagen original
+    // Imagen original cuadrada
     const origCanvas = document.createElement('canvas');
-    origCanvas.width = figuresState.sourceImage.naturalWidth;
-    origCanvas.height = figuresState.sourceImage.naturalHeight;
+    origCanvas.width = size;
+    origCanvas.height = size;
     const octx = origCanvas.getContext('2d');
-    octx.drawImage(figuresState.sourceImage, 0, 0);
+    const minDim = Math.min(figuresState.sourceImage.naturalWidth, figuresState.sourceImage.naturalHeight);
+    const sx = (figuresState.sourceImage.naturalWidth - minDim) / 2;
+    const sy = (figuresState.sourceImage.naturalHeight - minDim) / 2;
+    octx.drawImage(figuresState.sourceImage, sx, sy, minDim, minDim, 0, 0, size, size);
     const originalDataUrl = origCanvas.toDataURL('image/png');
     
-    // Crear objeto figura
     const figure = {
         id: 'fig_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
         name: 'Figura ' + (figuresState.figures.length + 1),
@@ -1730,13 +1729,11 @@ async function saveCurrentFigure() {
         await saveFigureToDB(figure);
         figuresState.figures.push(figure);
         renderFiguresList();
-        
-        // Reset editor
         resetMaskEditor();
         
         figuresElements.saveStatus.textContent = '✅ Guardada';
         setTimeout(() => figuresElements.saveStatus.textContent = '', 2000);
-        addDebug(`💾 Figura guardada: ${figure.id} - Color objetivo: L${figure.targetColor.lab.L.toFixed(1)}`);
+        addDebug(`💾 Figura guardada en formato cuadrado perfecto`);
         
     } catch (err) {
         addDebug('Error guardando figura: ' + err.message);
@@ -2178,29 +2175,19 @@ function drawFigureWithMask() {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
-        canvas.width = 600;
+        canvas.width = 500;
         canvas.height = 500;
         
-        // Escalar manteniendo proporciones (cover)
-        const scale = Math.max(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight);
-        const drawW = Math.round(img.naturalWidth * scale);
-        const drawH = Math.round(img.naturalHeight * scale);
-        const drawX = Math.round((canvas.width - drawW) / 2);
-        const drawY = Math.round((canvas.height - drawH) / 2);
+        ctx.clearRect(0, 0, 500, 500);
+        ctx.drawImage(img, 0, 0, 500, 500);
         
-        // Limpiar canvas y dibujar imagen original
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, drawX, drawY, drawW, drawH);
-        
-        // Cargar máscara guardada
         if (figure.mask) {
             const maskImg = new Image();
             maskImg.crossOrigin = 'anonymous';
             maskImg.onload = () => {
-                // Dibujar la máscara encima con opacidad o mezcla para que se distinga la zona a adivinar
                 ctx.save();
-                ctx.globalAlpha = 0.85; // Ajusta la opacidad para que se vea la máscara sin cegar la pantalla
-                ctx.drawImage(maskImg, drawX, drawY, drawW, drawH);
+                ctx.globalAlpha = 0.85;
+                ctx.drawImage(maskImg, 0, 0, 500, 500);
                 ctx.restore();
             };
             maskImg.src = figure.mask;

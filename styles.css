@@ -873,7 +873,10 @@ body {
     overflow: hidden;
     box-shadow: var(--shadow-lg);
     background: #1e293b;
-    aspect-ratio: 6/5;
+    aspect-ratio: 1; /* Cuadrado perfecto */
+    width: 100%;
+    max-width: 420px;
+    margin: 0 auto;
 }
 .figure-display canvas {
     display: block;
