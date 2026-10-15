@@ -418,6 +418,15 @@ function handleGuestConfirm() {
     gameState.player.confirmed = true;
     savePlayerData();
     
+    // ➕ AGREGAR ESTO: Registrarse a sí mismo en el mapa local de jugadores del invitado
+    gameState.room.players.set(gameState.player.id, {
+        id: gameState.player.id,
+        name: gameState.player.name,
+        avatar: gameState.player.avatar,
+        isHost: false,
+        confirmed: true
+    });
+    
     elements.guestConfirmBtn.disabled = true;
     elements.guestConfirmBtn.innerHTML = '<span class="btn-icon">⏳</span> Uniéndose...';
     addDebug(`🎯 Invitado confirma: ${name} (${gameState.player.avatar})`);
@@ -1911,8 +1920,8 @@ function cacheGameElements() {
 function setupGameListeners() {
     gameElements.exitBtn.addEventListener('click', handleGameExit);
     gameElements.endTurnBtn.addEventListener('click', handleEndTurn);
-    gameElements.nextRoundBtn.addEventListener('click', handleNextRound);
-    gameElements.backToHomeBtn.addEventListener('click', () => showScreen('home-screen'));
+    // gameElements.nextRoundBtn.addEventListener('click', handleNextRound);
+    gameElements.backToHomeBtn.addEventListener('click', handleGameExit);
     
     // Knob listeners
     setupKnob(gameElements.knobL, 'L');
@@ -2443,7 +2452,7 @@ function showRoundResults() {
     gameElements.roundResultsOverlay.classList.remove('hidden');
 }
 
-function handleNextRound() {
+ /*function handleNextRound() {
     clearTimeout(gameState.countdownInterval);
     gameElements.roundResultsOverlay.classList.add('hidden');
     
@@ -2452,7 +2461,7 @@ function handleNextRound() {
     } else {
         startRound();
     }
-}
+} */
 
 function handleNextRoundAuto() {
     clearTimeout(gameState.countdownInterval);
