@@ -2303,18 +2303,31 @@ function sendPlayerLab() {
 }
 
 function handlePlayerLab(data) {
-    // Store player's lab for scoring
-    if (!gameState.roundResults[data.round]) gameState.roundResults[data.round] = [];
-    gameState.roundResults[data.round].push({
+    if (!gameState.roundResults[data.round]) {
+        gameState.roundResults[data.round] = [];
+    }
+    
+    const playerData = {
         playerId: data.playerId,
         lab: data.lab,
         name: gameState.room.players.get(data.playerId)?.name || 'Jugador'
-    });
+    };
+
+    // 🛡️ Verificar si el jugador ya había enviado su resultado en esta ronda
+    const existingIndex = gameState.roundResults[data.round].findIndex(r => r.playerId === data.playerId);
     
-    // If host, check if all players have submitted
+    if (existingIndex !== -1) {
+        // Si ya existía, actualizamos su valor por si acaso (evita duplicados en la lista)
+        gameState.roundResults[data.round][existingIndex] = playerData;
+    } else {
+        // Si no existía, lo agregamos normalmente
+        gameState.roundResults[data.round].push(playerData);
+    }
+    
+    // Si soy el host, verificar si todos ya enviaron para cerrar la ronda antes de que acabe el tiempo
     if (gameState.player.isHost) {
         const expected = gameState.room.players.size;
-        const received = gameState.roundResults[data.round]?.length || 0;
+        const received = gameState.roundResults[data.round].length;
         if (received >= expected) {
             endRound();
         }
@@ -2326,6 +2339,32 @@ function endRound() {
     gameState.roundActive = false;
     clearInterval(gameState.timerInterval);
     gameElements.endTurnBtn.disabled = true;
+    
+    // 💡 1. Si el tiempo se agotó y el jugador no había dado a "Terminar turno", enviarlo automáticamente con su valor actual
+    if (!gameState.turnEnded) {
+        gameState.turnEnded = true;
+        sendPlayerLab();
+    }
+    
+    // 🛡️ 2. Si somos el host, asegurarnos de que ningún jugador se quede sin registrar en la ronda
+    if (gameState.player.isHost) {
+        if (!gameState.roundResults[gameState.currentRound]) {
+            gameState.roundResults[gameState.currentRound] = [];
+        }
+        
+        gameState.room.players.forEach((p, id) => {
+            const alreadySubmitted = gameState.roundResults[gameState.currentRound].some(r => r.playerId === id);
+            if (!alreadySubmitted) {
+                // Si el jugador no envió su respuesta a tiempo (por desconexión o por timeout total), 
+                // le registramos un valor neutro por defecto para que aparezca en la tabla con 0 o puntaje mínimo.
+                gameState.roundResults[gameState.currentRound].push({
+                    playerId: id,
+                    lab: { L: 50, a: 0, b: 0 },
+                    name: p.name || 'Jugador'
+                });
+            }
+        });
+    }
     
     // Calculate scores for all players
     calculateRoundScores();
