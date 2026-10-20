@@ -2501,11 +2501,9 @@ function endRound() {
         gameState.room.players.forEach((p, id) => {
             const alreadySubmitted = gameState.roundResults[gameState.currentRound].some(r => r.playerId === id);
             if (!alreadySubmitted) {
-                // Si el jugador no envió su respuesta a tiempo (por desconexión o por timeout total), 
-                // le registramos un valor neutro por defecto para que aparezca en la tabla con 0 o puntaje mínimo.
                 gameState.roundResults[gameState.currentRound].push({
                     playerId: id,
-                    lab: { L: 50, a: 0, b: 0 },
+                    rgb: { r: 128, g: 128, b: 128 }, // 👈 Cambiar 'lab: { ... }' por 'rgb: { r: 128, g: 128, b: 128 }'
                     name: p.name || 'Jugador'
                 });
             }
@@ -2727,7 +2725,7 @@ function cleanupGame() {
 function handleGameMessage(from, data) {
     switch (data.type) {
         case 'player-rgb':
-            handlePlayerLab(data);
+            handlePlayerRgb(data);
             break;
         case 'start-round':
             if (!gameState.player.isHost) startRound();
