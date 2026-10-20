@@ -29,7 +29,7 @@ const gameState = {
     timeRemaining: 0,
     timerInterval: null,
     countdownInterval: null,
-    playerLab: { L: 50, a: 0, b: 0 },
+    playerRgb: { r: 128, g: 128, b: 128 },
     targetLab: { L: 50, a: 0, b: 0 },
     roundActive: false,
     turnEnded: false,
@@ -696,7 +696,7 @@ function updateStartButton() {
     let confirmed = 0;
     gameState.room.players.forEach(p => { if (p.confirmed) confirmed++; });
     
-    elements.startGameBtn.disabled = confirmed < 2;
+    elements.startGameBtn.disabled = confirmed < 1; //jugadoresminimos
     // elements.minPlayersMsg.style.display = confirmed < 2 ? 'block' : 'none';
     // elements.minPlayersMsg.textContent = confirmed < 2 
     //    ? `Mínimo 2 jugadores listos (${confirmed}/2)` : '';
@@ -1016,7 +1016,7 @@ function precalculateRoundDurations() {
 function handleStartGame() {
     let confirmed = 0;
     gameState.room.players.forEach(p => { if (p.confirmed) confirmed++; });
-    if (confirmed < 2) return;
+    if (confirmed < 1) return; //jugadoresminimos
     
     precalculateRoundDurations();
     
@@ -1924,156 +1924,200 @@ function setupGameListeners() {
     gameElements.backToHomeBtn.addEventListener('click', handleGameExit);
     
     // Knob listeners
-    setupKnob(gameElements.knobL, 'L');
-    setupKnob(gameElements.knobA, 'a');
-    setupKnob(gameElements.knobB, 'b');
+    //setupKnob(gameElements.knobL, 'L');
+    //setupKnob(gameElements.knobA, 'a');
+    //setupKnob(gameElements.knobB, 'b');
 }
 
-function setupKnob(k, axis) {
-    const canvas = k.canvas;
-    const ctx = canvas.getContext('2d');
-    let isDragging = false;
-    let startAngle = 0;
-    let startValue = 0;
-    
-    const ranges = {
-        L: { min: 0, max: 100, initial: 50 },
-        a: { min: -128, max: 127, initial: 0 },
-        b: { min: -128, max: 127, initial: 0 }
-    };
-    
-    const range = ranges[axis];
-    let currentValue = range.initial;
-    
-    // Draw knob
-    function drawKnob(value) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
-        const radius = Math.min(centerX, centerY) - 10;
-        
-        // Background circle
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-        ctx.fillStyle = '#1e293b';
-        ctx.fill();
-        ctx.strokeStyle = '#334155';
-        ctx.lineWidth = 3;
-        ctx.stroke();
-        
-        // Value arc
-        const normalized = (value - range.min) / (range.max - range.min);
-        const startAngle = -Math.PI / 2;
-        const endAngle = startAngle + (normalized * Math.PI * 2);
-        
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius - 4, startAngle, endAngle);
-        ctx.strokeStyle = axis === 'L' ? '#6366f1' : (axis === 'a' ? '#ef4444' : '#eab308');
-        ctx.lineWidth = 8;
-        ctx.lineCap = 'round';
-        ctx.stroke();
-        
-        // Center dot
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, 8, 0, Math.PI * 2);
-        ctx.fillStyle = axis === 'L' ? '#6366f1' : (axis === 'a' ? '#ef4444' : '#eab308');
-        ctx.fill();
-        
-        // Marker line
-        const markerAngle = startAngle + (normalized * Math.PI * 2);
-        const markerX = centerX + Math.cos(markerAngle) * (radius - 12);
-        const markerY = centerY + Math.sin(markerAngle) * (radius - 12);
-        const markerX2 = centerX + Math.cos(markerAngle) * (radius + 4);
-        const markerY2 = centerY + Math.sin(markerAngle) * (radius + 4);
-        
-        ctx.beginPath();
-        ctx.moveTo(markerX, markerY);
-        ctx.lineTo(markerX2, markerY2);
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 3;
-        ctx.stroke();
-    }
-    
-    function valueToAngle(value) {
-        const normalized = (value - range.min) / (range.max - range.min);
-        return -Math.PI / 2 + (normalized * Math.PI * 2);
-    }
-    
-    function angleToValue(angle) {
-        let normalized = (angle + Math.PI / 2) / (Math.PI * 2);
-        normalized = Math.max(0, Math.min(1, normalized));
-        return Math.round((range.min + normalized * (range.max - range.min)) * 2) / 2;
-    }
-    
-    function handleDown(e) {
+// ========================================
+// CUBO 3D RGB Y ROTACIÓN
+// ========================================
+
+const cubeState = {
+    rotX: 0.6,
+    rotY: 0.8,
+    isDragging: false,
+    startX: 0,
+    startY: 0
+};
+
+function initRgbCube() {
+    const container = document.getElementById('rgb-cube-container');
+    if (!container) return;
+
+    // Eventos de ratón para rotar
+    container.addEventListener('mousedown', (e) => {
         if (!gameState.roundActive || gameState.turnEnded) return;
-        isDragging = true;
-        const rect = canvas.getBoundingClientRect();
-        const centerX = rect.left + canvas.width / 2;
-        const centerY = rect.top + canvas.height / 2;
-        startAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
-        startValue = currentValue;
-        canvas.style.cursor = 'grabbing';
-    }
-    
-    function handleMove(e) {
-        if (!isDragging) return;
-        const rect = canvas.getBoundingClientRect();
-        const centerX = rect.left + canvas.width / 2;
-        const centerY = rect.top + canvas.height / 2;
-        const currentAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
-        let deltaAngle = currentAngle - startAngle;
-        
-        // Normalize delta angle
-        while (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2;
-        while (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
-        
-        const newValue = startValue + (deltaAngle / (Math.PI * 2)) * (range.max - range.min);
-        currentValue = Math.max(range.min, Math.min(range.max, newValue));
-        currentValue = Math.round(currentValue * 2) / 2; // step 0.5
-        
-        updateKnobValue(axis, currentValue);
-        drawKnob(currentValue);
-    }
-    
-    function handleUp() {
-        isDragging = false;
-        canvas.style.cursor = 'grab';
-    }
-    
-    canvas.addEventListener('mousedown', handleDown);
-    canvas.addEventListener('touchstart', (e) => handleDown(e.touches[0]), { passive: true });
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('touchmove', (e) => handleMove(e.touches[0]), { passive: true });
-    window.addEventListener('mouseup', handleUp);
-    window.addEventListener('touchend', handleUp);
-    
-    // Also sync with hidden input
-    k.input.addEventListener('input', () => {
-        currentValue = parseFloat(k.input.value);
-        updateKnobValue(axis, currentValue);
-        drawKnob(currentValue);
+        cubeState.isDragging = true;
+        cubeState.startX = e.clientX;
+        cubeState.startY = e.clientY;
     });
-    
-    // Initial draw
-    drawKnob(currentValue);
-    k.value.textContent = currentValue;
-    
-    // Store reference
-    k._draw = drawKnob;
-    k._setValue = (v) => {
-        currentValue = v;
-        drawKnob(currentValue);
-        k.value.textContent = currentValue;
-        k.input.value = currentValue;
-    };
-    k._getValue = () => currentValue;
+
+    window.addEventListener('mousemove', (e) => {
+        if (!cubeState.isDragging) return;
+        const dx = e.clientX - cubeState.startX;
+        const dy = e.clientY - cubeState.startY;
+        cubeState.startX = e.clientX;
+        cubeState.startY = e.clientY;
+
+        cubeState.rotY += dx * 0.01;
+        cubeState.rotX += dy * 0.01;
+        renderRgbCube();
+    });
+
+    window.addEventListener('mouseup', () => { cubeState.isDragging = false; });
+
+    // Eventos táctiles para móviles
+    container.addEventListener('touchstart', (e) => {
+        if (!gameState.roundActive || gameState.turnEnded) return;
+        cubeState.isDragging = true;
+        cubeState.startX = e.touches[0].clientX;
+        cubeState.startY = e.touches[0].clientY;
+    }, { passive: true });
+
+    window.addEventListener('touchmove', (e) => {
+        if (!cubeState.isDragging) return;
+        const dx = e.touches[0].clientX - cubeState.startX;
+        const dy = e.touches[0].clientY - cubeState.startY;
+        cubeState.startX = e.touches[0].clientX;
+        cubeState.startY = e.touches[0].clientY;
+
+        cubeState.rotY += dx * 0.01;
+        cubeState.rotX += dy * 0.01;
+        renderRgbCube();
+    }, { passive: true });
+
+    window.addEventListener('touchend', () => { cubeState.isDragging = false; });
+
+    renderRgbCube();
 }
 
-function updateKnobValue(axis, value) {
-    if (axis === 'L') gameState.playerLab.L = value;
-    else if (axis === 'a') gameState.playerLab.a = value;
-    else if (axis === 'b') gameState.playerLab.b = value;
+function renderRgbCube() {
+    const canvas = document.getElementById('rgb-cube-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const cx = width / 2;
+    const cy = height / 2;
+    const scale = 80;
+
+    // 8 vértices del cubo en espacio normalizado [-0.5, 0.5]
+    const vertices = [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5],
+        [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5],
+        [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]
+    ];
+
+    const faces = [
+        { indices: [0, 1, 2, 3] }, // Trasera
+        { indices: [4, 7, 6, 5] }, // Delantera
+        { indices: [0, 4, 5, 1] }, // Inferior
+        { indices: [2, 6, 7, 3] }, // Superior
+        { indices: [0, 3, 7, 4] }, // Izquierda
+        { indices: [1, 5, 6, 2] }  // Derecha
+    ];
+
+    const cosX = Math.cos(cubeState.rotX), sinX = Math.sin(cubeState.rotX);
+    const cosY = Math.cos(cubeState.rotY), sinY = Math.sin(cubeState.rotY);
+
+    const projected = vertices.map(v => {
+        let x1 = v[0] * cosY + v[2] * sinY;
+        let y1 = v[1];
+        let z1 = -v[0] * sinY + v[2] * cosY;
+
+        let x2 = x1;
+        let y2 = y1 * cosX - z1 * sinX;
+        let z2 = y1 * sinX + z1 * cosX;
+
+        return {
+            x: cx + x2 * scale,
+            y: cy + y2 * scale,
+            z: z2,
+            local: v
+        };
+    });
+
+    // Ordenar caras por profundidad (Painter's algorithm)
+    faces.forEach(face => {
+        let avgZ = 0;
+        face.indices.forEach(idx => avgZ += projected[idx].z);
+        face.zIndex = avgZ / 4;
+    });
+    faces.sort((a, b) => a.zIndex - b.zIndex);
+
+    // Dibujar cada cara con una malla ligera para lograr el gradiente RGB fluido
+    faces.forEach(face => {
+        const [v0, v1, v2, v3] = face.indices.map(i => projected[i]);
+        const [l0, l1, l2, l3] = face.indices.map(i => vertices[i]);
+
+        const steps = 6; // Subdivisión ligera y eficiente
+        for (let i = 0; i < steps; i++) {
+            for (let j = 0; j < steps; j++) {
+                const u1 = i / steps, u2 = (i + 1) / steps;
+                const w1 = j / steps, w2 = (j + 1) / steps;
+
+                const pA = interpolateProj(v0, v1, v2, v3, u1, w1);
+                const pB = interpolateProj(v0, v1, v2, v3, u2, w1);
+                const pC = interpolateProj(v0, v1, v2, v3, u2, w2);
+                const pD = interpolateProj(v0, v1, v2, v3, u1, w2);
+
+                const midU = (u1 + u2) / 2;
+                const midW = (w1 + w2) / 2;
+                const locX = (1-midU)*(1-midW)*l0[0] + midU*(1-midW)*l1[0] + midU*midW*l2[0] + (1-midU)*midW*l3[0];
+                const locY = (1-midU)*(1-midW)*l0[1] + midU*(1-midW)*l1[1] + midU*midW*l2[1] + (1-midU)*midW*l3[1];
+                const locZ = (1-midU)*(1-midW)*l0[2] + midU*(1-midW)*l1[2] + midU*midW*l2[2] + (1-midU)*midW*l3[2];
+
+                const cr = Math.round((locX + 0.5) * 255);
+                const cg = Math.round((locY + 0.5) * 255);
+                const cb = Math.round((locZ + 0.5) * 255);
+
+                ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+                ctx.beginPath();
+                ctx.moveTo(pA.x, pA.y);
+                ctx.lineTo(pB.x, pB.y);
+                ctx.lineTo(pC.x, pC.y);
+                ctx.lineTo(pD.x, pD.y);
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+    });
+
+    updateSelectedColorFromCube();
+}
+
+function interpolateProj(v0, v1, v2, v3, u, w) {
+    const x = (1-u)*(1-w)*v0.x + u*(1-w)*v1.x + u*w*v2.x + (1-u)*w*v3.x;
+    const y = (1-u)*(1-w)*v0.y + u*(1-w)*v1.y + u*w*v2.y + (1-u)*w*v3.y;
+    return { x, y };
+}
+
+function updateSelectedColorFromCube() {
+    const cosX = Math.cos(-cubeState.rotX), sinX = Math.sin(-cubeState.rotX);
+    const cosY = Math.cos(-cubeState.rotY), sinY = Math.sin(-cubeState.rotY);
+
+    let x = 0, y = 0, z = 0.5;
+    let x1 = x * cosY + z * sinY;
+    let y1 = y;
+    let z1 = -x * sinY + z * cosY;
+    let x2 = x1;
+    let y2 = y1 * cosX - z1 * sinX;
+    let z2 = y1 * sinX + z1 * cosX;
+
+    const clampedX = Math.max(-0.5, Math.min(0.5, x2));
+    const clampedY = Math.max(-0.5, Math.min(0.5, y2));
+    const clampedZ = Math.max(-0.5, Math.min(0.5, z2));
+
+    gameState.playerRgb = {
+        r: Math.round((clampedX + 0.5) * 255),
+        g: Math.round((clampedY + 0.5) * 255),
+        b: Math.round((clampedZ + 0.5) * 255)
+    };
 }
 
 function initGameScreen() {
@@ -2087,7 +2131,7 @@ function resetGameState() {
     gameState.totalRounds = gameState.room.totalRounds || 5;
     gameState.roundDuration = gameState.room.baseDuration || 10;
     gameState.timeRemaining = gameState.roundDuration;
-    gameState.playerLab = { L: 50, a: 0, b: 0 };
+    gameState.playerRgb = { r: 128, g: 128, b: 128 };
     gameState.targetLab = { L: 50, a: 0, b: 0 };
     gameState.roundActive = false;
     gameState.turnEnded = false;
@@ -2101,15 +2145,16 @@ function resetGameState() {
     });
     
     // Reset knobs
-    if (gameElements.knobL._setValue) gameElements.knobL._setValue(50);
-    if (gameElements.knobA._setValue) gameElements.knobA._setValue(0);
-    if (gameElements.knobB._setValue) gameElements.knobB._setValue(0);
+    //meElements.knobL._setValue) gameElements.knobL._setValue(50);
+    //if (gameElements.knobA._setValue) gameElements.knobA._setValue(0);
+    //if (gameElements.knobB._setValue) gameElements.knobB._setValue(0);
     gameState.playerLab = { L: 50, a: 0, b: 0 };
 }
 
 async function startGame() {
     initGameScreen();
     showScreen('game-screen');
+    initRgbCube();
     
     // Load all figures (preloaded + local)
     await loadAllFigures();
@@ -2181,9 +2226,9 @@ function startRound() {
     
     // Reset player knobs
     gameState.playerLab = { L: 50, a: 0, b: 0 };
-    if (gameElements.knobL._setValue) gameElements.knobL._setValue(50);
-    if (gameElements.knobA._setValue) gameElements.knobA._setValue(0);
-    if (gameElements.knobB._setValue) gameElements.knobB._setValue(0);
+    //if (gameElements.knobL._setValue) gameElements.knobL._setValue(50);
+    //if (gameElements.knobA._setValue) gameElements.knobA._setValue(0);
+    //if (gameElements.knobB._setValue) gameElements.knobB._setValue(0);
     
     // Start timer
     startTimer();
@@ -2204,7 +2249,7 @@ function selectFigureForRound() {
     // Use selected figure if exists, otherwise random
     let figure = gameState.room.selectedFigure || gameState.allFigures[Math.floor(Math.random() * gameState.allFigures.length)];
     gameState.currentFigure = figure;
-    gameState.targetLab = figure.targetColor.lab;
+    gameState.targetRgb = figure.targetColor.rgb;
     
     // Update label
     gameElements.figureLabel.textContent = figure.name || 'Figura';
@@ -2279,7 +2324,7 @@ function handleEndTurn() {
     sendPlayerLab();
     
     // Calculate score locally for immediate feedback
-    const score = calculateDeltaE(gameState.playerLab, gameState.targetLab);
+    const score = calculateRgbSimilarity(r.rgb, gameState.targetRgb);
     addDebug(`✅ Turno terminado - Similitud: ${score}%`);
 }
 
@@ -2411,18 +2456,13 @@ function broadcastRoundResults() {
     });
 }
 
-function calculateDeltaE(playerLab, targetLab) {
-    // CIE76 Delta E
-    const dL = playerLab.L - targetLab.L;
-    const da = playerLab.a - targetLab.a;
-    const db = playerLab.b - targetLab.b;
-    const deltaE = Math.sqrt(dL*dL + da*da + db*db);
-    
-    // Convert to percentage (100 = perfect match, 0 = max difference)
-    // Max theoretical DeltaE in Lab is ~200, but practical max ~100
-    const maxDeltaE = 100;
-    const similarity = Math.max(0, Math.min(100, 100 - (deltaE / maxDeltaE) * 100));
-    
+function calculateRgbSimilarity(playerRgb, targetRgb) {
+    const dr = playerRgb.r - targetRgb.r;
+    const dg = playerRgb.g - targetRgb.g;
+    const db = playerRgb.b - targetRgb.b;
+    const distance = Math.sqrt(dr*dr + dg*dg + db*db);
+    const maxDist = Math.sqrt(255*255 * 3); // Distancia máxima en espacio RGB
+    const similarity = Math.max(0, Math.min(100, 100 - (distance / maxDist) * 100));
     return Math.round(similarity);
 }
 
@@ -2432,7 +2472,7 @@ function calculateRoundScores() {
                            (gameState.room.config?.timeBonus === 'sometimes' && Math.random() < 0.5);
     
     results.forEach(r => {
-        const baseScore = calculateDeltaE(r.lab, gameState.targetLab);
+        const baseScore = calculateRgbSimilarity(r.rgb, gameState.targetRgb);
         let finalScore = baseScore;
         
         // Time bonus

@@ -369,35 +369,11 @@
                     </div>
                 </section>
 
-                <!-- Perillas CIELAB -->
+                <!-- Selector de Color Cubo RGB 3D -->
                 <section class="game-controls-section">
-                    <div class="knobs-container">
-                        <!-- Perilla L* (Luminosidad) -->
-                        <div class="knob-group">
-                            <label class="knob-label">L* <span class="knob-value" id="knob-l-value">50</span></label>
-                            <div class="knob-wrapper">
-                                <canvas class="knob-canvas" id="knob-l-canvas" width="120" height="120"></canvas>
-                                <input type="range" class="knob-input hidden" id="knob-l-input" min="0" max="100" value="50" step="0.5">
-                            </div>
-                        </div>
-
-                        <!-- Perilla a* (Verde-Rojo) -->
-                        <div class="knob-group">
-                            <label class="knob-label">a* <span class="knob-value" id="knob-a-value">0</span></label>
-                            <div class="knob-wrapper">
-                                <canvas class="knob-canvas" id="knob-a-canvas" width="120" height="120"></canvas>
-                                <input type="range" class="knob-input hidden" id="knob-a-input" min="-128" max="127" value="0" step="0.5">
-                            </div>
-                        </div>
-
-                        <!-- Perilla b* (Azul-Amarillo) -->
-                        <div class="knob-group">
-                            <label class="knob-label">b* <span class="knob-value" id="knob-b-value">0</span></label>
-                            <div class="knob-wrapper">
-                                <canvas class="knob-canvas" id="knob-b-canvas" width="120" height="120"></canvas>
-                                <input type="range" class="knob-input hidden" id="knob-b-input" min="-128" max="127" value="0" step="0.5">
-                            </div>
-                        </div>
+                    <div class="rgb-cube-container" id="rgb-cube-container">
+                        <canvas id="rgb-cube-canvas" width="220" height="220"></canvas>
+                        <div class="cube-selector-dot"></div>
                     </div>
                 </section>
 
