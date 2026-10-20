@@ -51,6 +51,7 @@ const elements = {};
 
 document.addEventListener('DOMContentLoaded', async () => {
     cacheElements();
+    cacheFiguresElements() // <--- Añadir esto aquí previene futuros errores de elementos no cacheados
     setupEventListeners();
     loadSavedPlayerData();
     renderAvatars('avatar-grid');
@@ -547,7 +548,7 @@ function handlePeerMessage(from, data) {
     addDebug(`📨 ${from.substring(0,8)}: ${data.type}`);
     
     // Game messages (incluyendo figure-data, round-results y game-results)
-    const gameTypes = ['player-lab', 'start-round', 'end-round', 'game-ended', 'figure-data', 'round-results', 'game-results'];
+    const gameTypes = ['player-rgb', 'start-round', 'end-round', 'game-ended', 'figure-data', 'round-results', 'game-results'];
     if (gameTypes.includes(data.type)) {
         handleGameMessage(from, data);
         return;
@@ -1151,7 +1152,6 @@ async function loadLocalFigureFromConfig(config) {
             const sx = (img.naturalWidth - minDim) / 2;
             const sy = (img.naturalHeight - minDim) / 2;
 
-            // 1. Crear canvas para la imagen original cuadrada
             const canvas = document.createElement('canvas');
             canvas.width = size;
             canvas.height = size;
@@ -1159,7 +1159,6 @@ async function loadLocalFigureFromConfig(config) {
             ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
             const originalDataUrl = canvas.toDataURL('image/png');
             
-            // 2. Crear canvas para la máscara aplicando el color objetivo y tolerancia
             const maskCanvas = document.createElement('canvas');
             maskCanvas.width = size;
             maskCanvas.height = size;
@@ -1171,8 +1170,8 @@ async function loadLocalFigureFromConfig(config) {
             const srcData = origImgData.data;
             const dstData = maskImgData.data;
             
-            const targetLab = config.lab || { L: 85, a: 10, b: 80 };
-            const targetRgb = labToRgb(targetLab.L, targetLab.a, targetLab.b);
+            // Usar RGB directamente en lugar de LAB
+            const targetRgb = config.rgb || { r: 255, g: 255, b: 255 };
             const tolerance = config.tolerance || 50;
             const tolSq = tolerance * tolerance;
             
@@ -1182,7 +1181,10 @@ async function loadLocalFigureFromConfig(config) {
                 const b = srcData[i+2];
                 const a = srcData[i+3];
                 
-                if (a === 0) continue;
+                if (a === 0) {
+                    dstData[i+3] = 0;
+                    continue;
+                }
                 
                 const dr = r - targetRgb.r;
                 const dg = g - targetRgb.g;
@@ -1190,13 +1192,11 @@ async function loadLocalFigureFromConfig(config) {
                 const distSq = dr*dr + dg*dg + db*db;
                 
                 if (distSq <= tolSq) {
-                    // Píxeles que coinciden con el color se vuelven blancos en la máscara
                     dstData[i] = 255;
                     dstData[i+1] = 255;
                     dstData[i+2] = 255;
                     dstData[i+3] = 255;
                 } else {
-                    // El resto se vuelve transparente para ocultarlo
                     dstData[i+3] = 0;
                 }
             }
@@ -1210,8 +1210,7 @@ async function loadLocalFigureFromConfig(config) {
                 original: originalDataUrl,
                 mask: maskDataUrl,
                 targetColor: {
-                    rgb: targetRgb,
-                    lab: targetLab
+                    rgb: targetRgb
                 },
                 tolerance: tolerance,
                 isLocal: true,
@@ -1223,44 +1222,11 @@ async function loadLocalFigureFromConfig(config) {
             saveFigureToDB(figure);
             resolve();
         };
-        img.onerror = () => {
-            addDebug('Error cargando imagen local: ' + config.url);
-            resolve();
-        };
+        img.onerror = () => resolve();
         img.src = config.url;
     });
 }
 
-// Conversión CIELAB a RGB (para figuras locales)
-function labToRgb(L, a, b) {
-    // L*a*b* a XYZ (D65)
-    const fy = (L + 16) / 116;
-    const fx = a / 500 + fy;
-    const fz = fy - b / 200;
-    
-    const Xn = 0.95047, Yn = 1.00000, Zn = 1.08883;
-    const X = Xn * labInvF(fx);
-    const Y = Yn * labInvF(fy);
-    const Z = Zn * labInvF(fz);
-    
-    // XYZ a sRGB
-    let r = X * 3.2404542 + Y * -1.5371385 + Z * -0.4985314;
-    let g = X * -0.9692660 + Y * 1.8760108 + Z * 0.0415560;
-    let bVal = X * 0.0556434 + Y * -0.2040259 + Z * 1.0572252; // Renombrado de 'let b' a 'let bVal'
-    
-    // Gamma correction
-    const toSRGB = (c) => c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1/2.4) - 0.055;
-    r = Math.round(Math.max(0, Math.min(255, toSRGB(r) * 255)));
-    g = Math.round(Math.max(0, Math.min(255, toSRGB(g) * 255)));
-    bVal = Math.round(Math.max(0, Math.min(255, toSRGB(bVal) * 255))); // Actualizado a bVal
-    
-    return { r, g, b: bVal }; // Retorna usando bVal
-}
-
-function labInvF(t) {
-    const delta = 6/29;
-    return t > delta ? t*t*t : 3*delta*delta*(t - 4/29);
-}
 
 // Guardar figura en DB
 async function saveFigureToDB(figure) {
@@ -1634,21 +1600,18 @@ function pickColorFromCanvas(e) {
     
     if (a === 0) return; // Transparente
     
-    // Guardar estado anterior en historial antes de cambiar
     saveHistoryState();
     
+    // Guardar directamente los valores RGB
     figuresState.pickedColor = { r, g, b };
-    const lab = rgbToLab(r, g, b);
-    figuresState.pickedColor.lab = lab;
     
-    // Actualizar UI
+    // Actualizar UI con formato RGB en lugar de LAB
     figuresElements.pickedColorBox.style.background = `rgb(${r},${g},${b})`;
-    figuresElements.pickedColorLab.textContent = `L: ${lab.L.toFixed(1)} a: ${lab.a.toFixed(1)} b: ${lab.b.toFixed(1)}`;
-    figuresElements.maskStatus.textContent = `Color seleccionado: L${lab.L.toFixed(0)} a${lab.a.toFixed(0)} b${lab.b.toFixed(0)}`;
+    figuresElements.pickedColorLab.textContent = `R: ${r} G: ${g} B: ${b}`;
+    figuresElements.maskStatus.textContent = `Color seleccionado: R:${r} G:${g} B:${b}`;
     figuresElements.maskStatus.style.color = 'var(--success-color)';
     figuresElements.maskSaveBtn.disabled = false;
     
-    // Aplicar máscara automáticamente
     applyMask();
 }
 
@@ -1659,71 +1622,45 @@ function applyMask() {
     const tolerance = figuresState.tolerance;
     const tolSq = tolerance * tolerance;
     
-    // SIEMPRE trabajar desde la imagen original limpia
     const srcData = figuresState.originalImageData.data;
     const dstData = figuresState.maskImageData.data;
-    const width = figuresState.maskCanvas.width;
-    const height = figuresState.maskCanvas.height;
     
-    // Copiar original a máscara y aplicar filtro
     for (let i = 0; i < srcData.length; i += 4) {
         const r = srcData[i];
         const g = srcData[i+1];
         const b = srcData[i+2];
         const a = srcData[i+3];
         
-        dstData[i] = r;
-        dstData[i+1] = g;
-        dstData[i+2] = b;
-        dstData[i+3] = a;
+        if (a === 0) {
+            dstData[i+3] = 0;
+            continue;
+        }
         
-        if (a === 0) continue;
-        
-        // Distancia euclidiana en RGB
         const dr = r - tr, dg = g - tg, db = b - tb;
         const distSq = dr*dr + dg*dg + db*db;
         
         if (distSq <= tolSq) {
-            // Enmascarar: blanco con alpha original
+            // Píxel dentro de la tolerancia: blanco opaco (forma la máscara)
             dstData[i] = 255;
             dstData[i+1] = 255;
             dstData[i+2] = 255;
-            // alpha se mantiene
+            dstData[i+3] = 255;
+        } else {
+            // Píxel fuera de la tolerancia: transparente (oculta el resto de la imagen)
+            dstData[i] = 0;
+            dstData[i+1] = 0;
+            dstData[i+2] = 0;
+            dstData[i+3] = 0;
         }
     }
     
     figuresState.maskCtx.putImageData(figuresState.maskImageData, 0, 0);
-    // NO guardar en historial aquí - la máscara se recalcula en tiempo real
 }
 
 // ========================================
-// CONVERSIÓN RGB → CIELAB (D65, 2° observer)
+// CONVERSIÓN RGB → CIELAB (D65, 2° observer) (obsoleto?)
 // ========================================
 
-function rgbToLab(r, g, b) {
-    // sRGB a XYZ (D65)
-    let [sr, sg, sb] = [r, g, b].map(c => {
-        c = c / 255;
-        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-    });
-    
-    // Matriz sRGB → XYZ (D65)
-    const X = sr * 0.4124564 + sg * 0.3575761 + sb * 0.1804375;
-    const Y = sr * 0.2126729 + sg * 0.7151522 + sb * 0.0721750;
-    const Z = sr * 0.0193339 + sg * 0.1191920 + sb * 0.9503041;
-    
-    // Normalizar por blanco D65
-    const Xn = 0.95047, Yn = 1.00000, Zn = 1.08883;
-    const fx = f(X / Xn);
-    const fy = f(Y / Yn);
-    const fz = f(Z / Zn);
-    
-    const L = 116 * fy - 16;
-    const a = 500 * (fx - fy);
-    const bVal = 200 * (fy - fz); // Renombrado de 'b' a 'bVal' para evitar el conflicto
-    
-    return { L: Math.max(0, Math.min(100, L)), a, b: bVal };
-}
 
 function f(t) {
     return t > 0.008856 ? Math.cbrt(t) : (7.787 * t + 16 / 116);
@@ -1766,8 +1703,7 @@ async function saveCurrentFigure() {
         original: originalDataUrl,
         mask: maskDataUrl,
         targetColor: {
-            rgb: { r: figuresState.pickedColor.r, g: figuresState.pickedColor.g, b: figuresState.pickedColor.b },
-            lab: figuresState.pickedColor.lab
+            rgb: { r: figuresState.pickedColor.r, g: figuresState.pickedColor.g, b: figuresState.pickedColor.b }
         },
         tolerance: figuresState.tolerance,
         createdAt: Date.now()
@@ -1811,13 +1747,16 @@ function resetMaskEditor() {
 // ========================================
 
 function renderFiguresList() {
+    // Si no estamos en la pantalla de figuras, el elemento no existe; salimos de forma segura
+    if (!figuresElements.list) return;
+    
     figuresElements.list.innerHTML = '';
     
     if (figuresState.figures.length === 0) {
-        figuresElements.empty.style.display = 'block';
+        if (figuresElements.empty) figuresElements.empty.style.display = 'block';
         return;
     }
-    figuresElements.empty.style.display = 'none';
+    if (figuresElements.empty) figuresElements.empty.style.display = 'none';
     
     figuresState.figures.forEach(fig => {
         const item = document.createElement('div');
@@ -1830,7 +1769,7 @@ function renderFiguresList() {
             e.stopPropagation();
             deleteFigure(fig.id);
         });
-        item.addEventListener('click', () => selectFigure(fig));
+        item.addEventListener('click', (event) => selectFigure(fig, event));
         figuresElements.list.appendChild(item);
     });
 }
@@ -1930,22 +1869,61 @@ function setupGameListeners() {
 }
 
 // ========================================
-// CUBO 3D RGB Y ROTACIÓN
+// CUBO 3D RGB Y ROTACIÓN LIBRE (TRACKBALL)
 // ========================================
 
 const cubeState = {
-    rotX: 0.6,
-    rotY: 0.8,
+    // Matriz de rotación inicial (Identidad 3x3)
+    matrix: [
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1
+    ],
     isDragging: false,
     startX: 0,
     startY: 0
 };
 
+// Multiplicación de matrices 3x3 para acumular rotaciones libres
+function multiplyMatrices(a, b) {
+    let res = [0,0,0, 0,0,0, 0,0,0];
+    for (let i = 0; i < 3; i++) {
+        for (let j = 0; j < 3; j++) {
+            res[i*3 + j] = a[i*3+0]*b[0*3+j] + a[i*3+1]*b[1*3+j] + a[i*3+2]*b[2*3+j];
+        }
+    }
+    return res;
+}
+
+function rotateMatrix(matrix, dx, dy) {
+    const alpha = dx * 0.01; // Movimiento horizontal en pantalla
+    const beta = -dy * 0.01; // Movimiento vertical en pantalla
+
+    // Rotación incremental en X
+    const cosB = Math.cos(beta), sinB = Math.sin(beta);
+    const rx = [
+        1, 0, 0,
+        0, cosB, -sinB,
+        0, sinB, cosB
+    ];
+
+    // Rotación incremental en Y
+    const cosA = Math.cos(alpha), sinA = Math.sin(alpha);
+    const ry = [
+        cosA, 0, sinA,
+        0, 1, 0,
+        -sinA, 0, cosA
+    ];
+
+    // Acumular la rotación libremente multiplicando las matrices
+    let delta = multiplyMatrices(ry, rx);
+    return multiplyMatrices(delta, matrix);
+}
+
 function initRgbCube() {
     const container = document.getElementById('rgb-cube-container');
     if (!container) return;
 
-    // Eventos de ratón para rotar
     container.addEventListener('mousedown', (e) => {
         if (!gameState.roundActive || gameState.turnEnded) return;
         cubeState.isDragging = true;
@@ -1960,14 +1938,12 @@ function initRgbCube() {
         cubeState.startX = e.clientX;
         cubeState.startY = e.clientY;
 
-        cubeState.rotY += dx * 0.01;
-        cubeState.rotX += dy * 0.01;
+        cubeState.matrix = rotateMatrix(cubeState.matrix, dx, dy);
         renderRgbCube();
     });
 
     window.addEventListener('mouseup', () => { cubeState.isDragging = false; });
 
-    // Eventos táctiles para móviles
     container.addEventListener('touchstart', (e) => {
         if (!gameState.roundActive || gameState.turnEnded) return;
         cubeState.isDragging = true;
@@ -1982,8 +1958,7 @@ function initRgbCube() {
         cubeState.startX = e.touches[0].clientX;
         cubeState.startY = e.touches[0].clientY;
 
-        cubeState.rotY += dx * 0.01;
-        cubeState.rotX += dy * 0.01;
+        cubeState.matrix = rotateMatrix(cubeState.matrix, dx, dy);
         renderRgbCube();
     }, { passive: true });
 
@@ -1999,126 +1974,83 @@ function renderRgbCube() {
     const width = canvas.width;
     const height = canvas.height;
 
-    ctx.clearRect(0, 0, width, height);
+    const imgData = ctx.createImageData(width, height);
+    const data = imgData.data;
 
     const cx = width / 2;
     const cy = height / 2;
-    const scale = 80;
+    const scale = 75;
 
-    // 8 vértices del cubo en espacio normalizado [-0.5, 0.5]
-    const vertices = [
-        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5],
-        [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
-        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5],
-        [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]
+    // Obtener la matriz transpuesta (inversa para rotaciones ortogonales)
+    const m = cubeState.matrix;
+    const mt = [
+        m[0], m[3], m[6],
+        m[1], m[4], m[7],
+        m[2], m[5], m[8]
     ];
 
-    const faces = [
-        { indices: [0, 1, 2, 3] }, // Trasera
-        { indices: [4, 7, 6, 5] }, // Delantera
-        { indices: [0, 4, 5, 1] }, // Inferior
-        { indices: [2, 6, 7, 3] }, // Superior
-        { indices: [0, 3, 7, 4] }, // Izquierda
-        { indices: [1, 5, 6, 2] }  // Derecha
-    ];
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const nx = (x - cx) / scale;
+            const ny = (y - cy) / scale;
+            const distSq = nx * nx + ny * ny;
+            const index = (y * width + x) * 4;
 
-    const cosX = Math.cos(cubeState.rotX), sinX = Math.sin(cubeState.rotX);
-    const cosY = Math.cos(cubeState.rotY), sinY = Math.sin(cubeState.rotY);
+            if (distSq <= 1.5) {
+                let z = Math.sqrt(Math.max(0, 1.5 - distSq));
 
-    const projected = vertices.map(v => {
-        let x1 = v[0] * cosY + v[2] * sinY;
-        let y1 = v[1];
-        let z1 = -v[0] * sinY + v[2] * cosY;
+                // Mapeo libre usando la matriz acumulada
+                let rx = mt[0]*nx + mt[1]*ny + mt[2]*z;
+                let ry = mt[3]*nx + mt[4]*ny + mt[5]*z;
+                let rz = mt[6]*nx + mt[7]*ny + mt[8]*z;
 
-        let x2 = x1;
-        let y2 = y1 * cosX - z1 * sinX;
-        let z2 = y1 * sinX + z1 * cosX;
+                let red = Math.max(0, Math.min(255, Math.round(((rx + 0.5) / 1) * 255)));
+                let green = Math.max(0, Math.min(255, Math.round(((ry + 0.5) / 1) * 255)));
+                let blue = Math.max(0, Math.min(255, Math.round(((rz + 0.5) / 1) * 255)));
 
-        return {
-            x: cx + x2 * scale,
-            y: cy + y2 * scale,
-            z: z2,
-            local: v
-        };
-    });
-
-    // Ordenar caras por profundidad (Painter's algorithm)
-    faces.forEach(face => {
-        let avgZ = 0;
-        face.indices.forEach(idx => avgZ += projected[idx].z);
-        face.zIndex = avgZ / 4;
-    });
-    faces.sort((a, b) => a.zIndex - b.zIndex);
-
-    // Dibujar cada cara con una malla ligera para lograr el gradiente RGB fluido
-    faces.forEach(face => {
-        const [v0, v1, v2, v3] = face.indices.map(i => projected[i]);
-        const [l0, l1, l2, l3] = face.indices.map(i => vertices[i]);
-
-        const steps = 6; // Subdivisión ligera y eficiente
-        for (let i = 0; i < steps; i++) {
-            for (let j = 0; j < steps; j++) {
-                const u1 = i / steps, u2 = (i + 1) / steps;
-                const w1 = j / steps, w2 = (j + 1) / steps;
-
-                const pA = interpolateProj(v0, v1, v2, v3, u1, w1);
-                const pB = interpolateProj(v0, v1, v2, v3, u2, w1);
-                const pC = interpolateProj(v0, v1, v2, v3, u2, w2);
-                const pD = interpolateProj(v0, v1, v2, v3, u1, w2);
-
-                const midU = (u1 + u2) / 2;
-                const midW = (w1 + w2) / 2;
-                const locX = (1-midU)*(1-midW)*l0[0] + midU*(1-midW)*l1[0] + midU*midW*l2[0] + (1-midU)*midW*l3[0];
-                const locY = (1-midU)*(1-midW)*l0[1] + midU*(1-midW)*l1[1] + midU*midW*l2[1] + (1-midU)*midW*l3[1];
-                const locZ = (1-midU)*(1-midW)*l0[2] + midU*(1-midW)*l1[2] + midU*midW*l2[2] + (1-midU)*midW*l3[2];
-
-                const cr = Math.round((locX + 0.5) * 255);
-                const cg = Math.round((locY + 0.5) * 255);
-                const cb = Math.round((locZ + 0.5) * 255);
-
-                ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
-                ctx.beginPath();
-                ctx.moveTo(pA.x, pA.y);
-                ctx.lineTo(pB.x, pB.y);
-                ctx.lineTo(pC.x, pC.y);
-                ctx.lineTo(pD.x, pD.y);
-                ctx.closePath();
-                ctx.fill();
+                data[index]     = red;
+                data[index + 1] = green;
+                data[index + 2] = blue;
+                data[index + 3] = 255;
+            } else {
+                data[index + 3] = 0;
             }
         }
-    });
+    }
 
+    ctx.putImageData(imgData, 0, 0);
     updateSelectedColorFromCube();
 }
 
-function interpolateProj(v0, v1, v2, v3, u, w) {
-    const x = (1-u)*(1-w)*v0.x + u*(1-w)*v1.x + u*w*v2.x + (1-u)*w*v3.x;
-    const y = (1-u)*(1-w)*v0.y + u*(1-w)*v1.y + u*w*v2.y + (1-u)*w*v3.y;
-    return { x, y };
-}
-
 function updateSelectedColorFromCube() {
-    const cosX = Math.cos(-cubeState.rotX), sinX = Math.sin(-cubeState.rotX);
-    const cosY = Math.cos(-cubeState.rotY), sinY = Math.sin(-cubeState.rotY);
+    // El punto blanco está fijo exactamente en el centro (nx = 0, ny = 0)
+    let nx = 0, ny = 0;
+    let z = Math.sqrt(Math.max(0, 1.5 - (nx*nx + ny*ny)));
 
-    let x = 0, y = 0, z = 0.5;
-    let x1 = x * cosY + z * sinY;
-    let y1 = y;
-    let z1 = -x * sinY + z * cosY;
-    let x2 = x1;
-    let y2 = y1 * cosX - z1 * sinX;
-    let z2 = y1 * sinX + z1 * cosX;
+    const m = cubeState.matrix;
+    const mt = [
+        m[0], m[3], m[6],
+        m[1], m[4], m[7],
+        m[2], m[5], m[8]
+    ];
 
-    const clampedX = Math.max(-0.5, Math.min(0.5, x2));
-    const clampedY = Math.max(-0.5, Math.min(0.5, y2));
-    const clampedZ = Math.max(-0.5, Math.min(0.5, z2));
+    let rx = mt[0]*nx + mt[1]*ny + mt[2]*z;
+    let ry = mt[3]*nx + mt[4]*ny + mt[5]*z;
+    let rz = mt[6]*nx + mt[7]*ny + mt[8]*z;
+
+    const clampedX = Math.max(-0.5, Math.min(0.5, rx));
+    const clampedY = Math.max(-0.5, Math.min(0.5, ry));
+    const clampedZ = Math.max(-0.5, Math.min(0.5, rz));
 
     gameState.playerRgb = {
         r: Math.round((clampedX + 0.5) * 255),
         g: Math.round((clampedY + 0.5) * 255),
         b: Math.round((clampedZ + 0.5) * 255)
     };
+    
+    updateFigureMaskWithCurrentColor();
 }
+
 
 function initGameScreen() {
     cacheGameElements();
@@ -2270,17 +2202,90 @@ function drawFigureWithMask() {
     img.onload = () => {
         canvas.width = 500;
         canvas.height = 500;
-        
         ctx.clearRect(0, 0, 500, 500);
-        ctx.drawImage(img, 0, 0, 500, 500);
+        
+        // Draw original image centered (cover)
+        const scale = Math.max(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight);
+        const drawW = Math.round(img.naturalWidth * scale);
+        const drawH = Math.round(img.naturalHeight * scale);
+        const drawX = Math.round((canvas.width - drawW) / 2);
+        const drawY = Math.round((canvas.height - drawH) / 2);
+        ctx.drawImage(img, drawX, drawY, drawW, drawH);
         
         if (figure.mask) {
             const maskImg = new Image();
             maskImg.crossOrigin = 'anonymous';
             maskImg.onload = () => {
                 ctx.save();
-                ctx.globalAlpha = 0.85;
-                ctx.drawImage(maskImg, 0, 0, 500, 500);
+                
+                if (gameState.playerRgb) {
+                    // Create a proper alpha mask from the mask image
+                    // The mask image has white where target color was detected
+                    // We need to create an alpha mask: opaque where mask is white, transparent elsewhere
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = canvas.width;
+                    tempCanvas.height = canvas.height;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    
+                    // 1. Draw the mask image at correct position/scale
+                    tempCtx.drawImage(maskImg, drawX, drawY, drawW, drawH);
+                    
+                    // 2. Convert to alpha mask: white becomes opaque, everything else transparent
+                    const imageData = tempCtx.getImageData(0, 0, canvas.width, canvas.height);
+                    const data = imageData.data;
+                    for (let i = 0; i < data.length; i += 4) {
+                        //const r = data[i], g = data[i+1], b = data[i+2];
+                        // If pixel is white (or near white), make it opaque; else transparent
+                        //const isWhite = r > 200 && g > 200 && b > 200;
+                        //data[i+3] = isWhite ? 255 : 0; // Alpha channel
+                        // En lugar de comprobar la blancura RGB, comprueba el canal alfa
+                        const alpha = data[i+3];
+                        data[i+3] = alpha > 128 ? 255 : 0;  // Opaco -> totalmente opaco, transparente -> totalmente transparente
+                    }
+                    tempCtx.putImageData(imageData, 0, 0);
+                    
+                    // 2. Fill with player's color
+                    tempCtx.fillStyle = `rgb(${gameState.playerRgb.r}, ${gameState.playerRgb.g}, ${gameState.playerRgb.b})`;
+                    tempCtx.fillRect(0, 0, canvas.width, canvas.height);
+                    
+                    // 3. Apply the alpha mask using destination-in
+                    tempCtx.globalCompositeOperation = 'destination-in';
+                    // The tempCanvas already has the alpha mask, just fill with color
+                    tempCtx.globalCompositeOperation = 'source-over';
+                    tempCtx.fillStyle = `rgb(${gameState.playerRgb.r}, ${gameState.playerRgb.g}, ${gameState.playerRgb.b})`;
+                    tempCtx.fillRect(0, 0, canvas.width, canvas.height);
+                    
+                    // Actually, simpler: just use the alpha mask as a clipping path
+                    // Reset and do it properly
+                    tempCtx.clearRect(0, 0, canvas.width, canvas.height);
+                    
+                    // Redraw the alpha mask
+                    tempCtx.drawImage(maskImg, drawX, drawY, drawW, drawH);
+                    const imageData2 = tempCtx.getImageData(0, 0, canvas.width, canvas.height);
+                    const data2 = imageData2.data;
+                    for (let i = 0; i < data2.length; i += 4) {
+                        const r = data2[i], g = data2[i+1], b = data2[i+2];
+                        const isWhite = r > 200 && g > 200 && b > 200;
+                        data2[i+3] = isWhite ? 255 : 0;
+                    }
+                    tempCtx.putImageData(imageData2, 0, 0);
+                    
+                    // Now fill with color using the alpha mask
+                    tempCtx.globalCompositeOperation = 'source-in';
+                    tempCtx.fillStyle = `rgb(${gameState.playerRgb.r}, ${gameState.playerRgb.g}, ${gameState.playerRgb.b})`;
+                    tempCtx.fillRect(0, 0, canvas.width, canvas.height);
+                    
+                    // 3. Draw the colored mask over the original image
+                    ctx.globalAlpha = 0.9; //opacidad mascara de color
+                    ctx.drawImage(tempCanvas, 0, 0);
+                    ctx.globalAlpha = 1.0;
+                } else {
+                    // Fallback: draw mask in white at the correct position
+                    ctx.globalAlpha = 0.9;
+                    ctx.drawImage(maskImg, drawX, drawY, drawW, drawH);
+                    ctx.globalAlpha = 1.0;
+                }
+                
                 ctx.restore();
             };
             maskImg.src = figure.mask;
@@ -2288,6 +2293,76 @@ function drawFigureWithMask() {
     };
     img.onerror = () => {
         addDebug('❌ Error al cargar la imagen original de la figura');
+    };
+    img.src = figure.original;
+}
+
+// ========================================
+// ACTUALIZACIÓN EN TIEMPO REAL DE LA MÁSCARA CON COLOR SELECCIONADO
+// ========================================
+
+function updateFigureMaskWithCurrentColor() {
+    if (!gameState.currentFigure || !gameState.playerRgb) return;
+    
+    const canvas = gameElements.canvas;
+    const ctx = canvas.getContext('2d');
+    const figure = gameState.currentFigure;
+    
+    // Redibujar la imagen original centrada (cover)
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+        canvas.width = 500;
+        canvas.height = 500;
+        ctx.clearRect(0, 0, 500, 500);
+        
+        // Draw original image centered (cover) - same as drawFigureWithMask
+        const scale = Math.max(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight);
+        const drawW = Math.round(img.naturalWidth * scale);
+        const drawH = Math.round(img.naturalHeight * scale);
+        const drawX = Math.round((canvas.width - drawW) / 2);
+        const drawY = Math.round((canvas.height - drawH) / 2);
+        ctx.drawImage(img, drawX, drawY, drawW, drawH);
+        
+        // Dibujar la máscara con el color actual seleccionado por el jugador
+        if (figure.mask && gameState.playerRgb) {
+            const maskImg = new Image();
+            maskImg.crossOrigin = 'anonymous';
+            maskImg.onload = () => {
+                // Create a proper alpha mask from the mask image
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = canvas.width;
+                tempCanvas.height = canvas.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                // 1. Draw the mask image at correct position/scale
+                tempCtx.drawImage(maskImg, drawX, drawY, drawW, drawH);
+                
+                // 2. Convert to alpha mask: white becomes opaque, everything else transparent
+                const imageData = tempCtx.getImageData(0, 0, canvas.width, canvas.height);
+                const data = imageData.data;
+                for (let i = 0; i < data.length; i += 4) {
+                    //const r = data[i], g = data[i+1], b = data[i+2];
+                    //const isWhite = r > 200 && g > 200 && b > 200;
+                    //data[i+3] = isWhite ? 255 : 0; // Alpha channel
+                    // En lugar de comprobar la blancura RGB, comprueba el canal alfa
+                    const alpha = data[i+3];
+                    data[i+3] = alpha > 128 ? 255 : 0;  // Opaco -> totalmente opaco, transparente -> totalmente transparente
+                }
+                tempCtx.putImageData(imageData, 0, 0);
+                
+                // Now fill with color using the alpha mask
+                tempCtx.globalCompositeOperation = 'source-in';
+                tempCtx.fillStyle = `rgb(${gameState.playerRgb.r}, ${gameState.playerRgb.g}, ${gameState.playerRgb.b})`;
+                tempCtx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw the colored mask over the original image with transparency
+                ctx.globalAlpha = 0.9;  //opacidad mascara de color
+                ctx.drawImage(tempCanvas, 0, 0);
+                ctx.globalAlpha = 1.0;
+            };
+            maskImg.src = figure.mask;
+        }
     };
     img.src = figure.original;
 }
@@ -2321,32 +2396,31 @@ function handleEndTurn() {
     gameElements.endTurnBtn.disabled = true;
     
     // Send player's lab to host
-    sendPlayerLab();
+    sendPlayerRgb();
     
     // Calculate score locally for immediate feedback
     const score = calculateRgbSimilarity(r.rgb, gameState.targetRgb);
     addDebug(`✅ Turno terminado - Similitud: ${score}%`);
 }
 
-function sendPlayerLab() {
+function sendPlayerRgb() {
     const data = {
-        type: 'player-lab',
+        type: 'player-rgb', // Cambiado de lab a rgb
         playerId: gameState.player.id,
-        lab: gameState.playerLab,
+        rgb: gameState.playerRgb, // Enviamos RGB directamente
         round: gameState.currentRound
     };
     
     if (gameState.player.isHost) {
-        handlePlayerLab(data);
+        handlePlayerRgb(data); // Función receptora para el host
     } else {
-        // Send to host
         const hostConn = gameState.connections.get(gameState.room.hostId);
         if (hostConn && hostConn.conn.open) {
             hostConn.conn.send(data);
         }
     }
 }
-
+/*
 function handlePlayerLab(data) {
     if (!gameState.roundResults[data.round]) {
         gameState.roundResults[data.round] = [];
@@ -2377,6 +2451,33 @@ function handlePlayerLab(data) {
             endRound();
         }
     }
+}*/
+
+function handlePlayerRgb(data) {
+    if (!gameState.roundResults[data.round]) {
+        gameState.roundResults[data.round] = [];
+    }
+    
+    const playerData = {
+        playerId: data.playerId,
+        rgb: data.rgb, // Guardamos rgb
+        name: gameState.room.players.get(data.playerId)?.name || 'Jugador'
+    };
+
+    const existingIndex = gameState.roundResults[data.round].findIndex(r => r.playerId === data.playerId);
+    if (existingIndex !== -1) {
+        gameState.roundResults[data.round][existingIndex] = playerData;
+    } else {
+        gameState.roundResults[data.round].push(playerData);
+    }
+    
+    if (gameState.player.isHost) {
+        const expected = gameState.room.players.size;
+        const received = gameState.roundResults[data.round].length;
+        if (received >= expected) {
+            endRound();
+        }
+    }
 }
 
 function endRound() {
@@ -2388,7 +2489,7 @@ function endRound() {
     // 💡 1. Si el tiempo se agotó y el jugador no había dado a "Terminar turno", enviarlo automáticamente con su valor actual
     if (!gameState.turnEnded) {
         gameState.turnEnded = true;
-        sendPlayerLab();
+        sendPlayerRgb();
     }
     
     // 🛡️ 2. Si somos el host, asegurarnos de que ningún jugador se quede sin registrar en la ronda
@@ -2472,17 +2573,16 @@ function calculateRoundScores() {
                            (gameState.room.config?.timeBonus === 'sometimes' && Math.random() < 0.5);
     
     results.forEach(r => {
+        // r.rgb ya contiene los valores correctos enviados por el usuario
         const baseScore = calculateRgbSimilarity(r.rgb, gameState.targetRgb);
         let finalScore = baseScore;
         
-        // Time bonus
         if (timeBonusActive && r.timeRemaining !== undefined) {
             const ratio = Math.max(0, Math.min(1, r.timeRemaining / getRoundDuration(gameState.currentRound)));
             const bonusPercent = ratio * 0.2;
             finalScore = Math.round(baseScore * (1 + bonusPercent));
         }
         
-        // Store
         if (gameState.scores[r.playerId]) {
             gameState.scores[r.playerId].roundScores.push(finalScore);
             gameState.scores[r.playerId].total += finalScore;
@@ -2492,7 +2592,6 @@ function calculateRoundScores() {
         r.baseScore = baseScore;
     });
     
-    // Sort by score descending
     results.sort((a, b) => b.score - a.score);
 }
 
@@ -2627,7 +2726,7 @@ function cleanupGame() {
 // Handle incoming game messages
 function handleGameMessage(from, data) {
     switch (data.type) {
-        case 'player-lab':
+        case 'player-rgb':
             handlePlayerLab(data);
             break;
         case 'start-round':
@@ -2734,10 +2833,6 @@ function handleGameResults(data) {
     gameElements.gameEndOverlay.classList.remove('hidden');
 }
 
-// Broadcast to all players
-function broadcastGame(type, data) {
-    broadcast(type, data);
-}
 
 // Expose game API
 window.gameAPI = {
