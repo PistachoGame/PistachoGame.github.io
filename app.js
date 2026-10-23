@@ -2138,7 +2138,7 @@ async function loadAllFigures() {
 async function runCountdown() {
     gameElements.countdownOverlay.classList.remove('hidden');
     
-    for (let i = 3; i >= 1; i--) {
+    for (let i = 5; i >= 1; i--) {
         gameElements.countdownNumber.textContent = i;
         await sleep(1000);
     }
@@ -2425,15 +2425,28 @@ function updateFigureMaskWithCurrentColor() {
 }
 
 function startTimer() {
+    // 1. Destruir cualquier reloj fantasma que haya quedado ejecutándose en segundo plano
+    clearInterval(gameState.timerInterval);
+    
     updateTimerDisplay();
+    
+    // Calcular el momento absoluto (en milisegundos) en el que debe terminar la ronda
+    const endTime = Date.now() + (gameState.timeRemaining * 1000);
+    
+    // Ejecutar la revisión cada 500ms para mayor fluidez visual, pero calcular en segundos
     gameState.timerInterval = setInterval(() => {
-        gameState.timeRemaining--;
+        // Calcular los segundos restantes de forma estricta contra el reloj del sistema
+        const remaining = Math.ceil((endTime - Date.now()) / 1000);
+        
+        // Evitar explícitamente que el tiempo restante sea menor a 0
+        gameState.timeRemaining = Math.max(0, remaining);
+        
         updateTimerDisplay();
         
         if (gameState.timeRemaining <= 0) {
             endRound();
         }
-    }, 1000);
+    }, 500); 
 }
 
 function updateTimerDisplay() {
@@ -2833,6 +2846,10 @@ function handleFigureData(data) {
 }
 
 function handleRoundResults(data) {
+    // 1. Añadir limpieza obligatoria del reloj local para evitar números negativos
+    clearInterval(gameState.timerInterval);
+    gameState.roundActive = false;
+
     // Update local state with broadcasted results
     gameState.roundResults[data.round] = data.results;
     
