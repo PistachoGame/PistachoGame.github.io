@@ -30,7 +30,6 @@ const gameState = {
     timerInterval: null,
     countdownInterval: null,
     playerRgb: { r: 128, g: 128, b: 128 },
-    targetLab: { L: 50, a: 0, b: 0 },
     roundActive: false,
     turnEnded: false,
     scores: {},
@@ -988,6 +987,21 @@ function isGyroModeActive(roundNumber) {
     return rand < 0.25;
 }
 
+function precalculateRoundFigures() {
+    const totalRounds = gameState.room.totalRounds || 5;
+    const allFigs = gameState.allFigures || [];
+    if (allFigs.length === 0) return;
+
+    const roundFigures = [];
+    for (let r = 1; r <= totalRounds; r++) {
+        // Priorizar la figura seleccionada manualmente si existe, o elegir una aleatoria
+        let fig = gameState.room.selectedFigure || allFigs[Math.floor(Math.random() * allFigs.length)];
+        roundFigures.push(fig);
+    }
+    gameState.room.roundFigures = roundFigures;
+    addDebug(`🖼️ Figuras precalculadas para las ${totalRounds} rondas.`);
+}
+
 function precalculateRoundDurations() {
     const totalRounds = calculateTotalRounds();
     const baseDuration = calculateBaseRoundDuration();
@@ -1014,33 +1028,39 @@ function precalculateRoundDurations() {
 // INTEGRACIÓN CON INICIO DE PARTIDA
 // ========================================
 
-function handleStartGame() {
+async function handleStartGame() {
     let confirmed = 0;
     gameState.room.players.forEach(p => { if (p.confirmed) confirmed++; });
-    if (confirmed < 1) return; //jugadoresminimos
+    if (confirmed < 1) return;
+    
+    // Asegurar que el host tenga las figuras cargadas
+    await loadAllFigures();
     
     precalculateRoundDurations();
+    precalculateRoundFigures(); // <--- Preseleccionar todas las figuras aquí
     
+    // Enviar la configuración y TODAS las figuras de la partida de golpe
     broadcast('start-game', {
         config: gameState.room.config,
         roundDurations: gameState.room.roundDurations,
         totalRounds: gameState.room.totalRounds,
-        baseDuration: gameState.room.baseDuration
+        baseDuration: gameState.room.baseDuration,
+        roundFigures: gameState.room.roundFigures // <--- Adjuntar figuras precargadas
     });
     
-    addDebug('🚀 Iniciando partida con config:', gameState.room.config);
+    addDebug('🚀 Iniciando partida con config y figuras precargadas');
     startGame();
 }
 
 function handleStartGameSignal(data) {
-    addDebug('🎮 Inicio recibido con config');
+    addDebug('🎮 Inicio recibido con config y figuras precargadas');
     
     gameState.room.config = data.config;
     gameState.room.roundDurations = data.roundDurations;
     gameState.room.totalRounds = data.totalRounds;
     gameState.room.baseDuration = data.baseDuration;
+    gameState.room.roundFigures = data.roundFigures; // <--- Guardar figuras precargadas
     
-    // Start the game screen
     startGame();
 }
 
@@ -2064,7 +2084,7 @@ function resetGameState() {
     gameState.roundDuration = gameState.room.baseDuration || 10;
     gameState.timeRemaining = gameState.roundDuration;
     gameState.playerRgb = { r: 128, g: 128, b: 128 };
-    gameState.targetLab = { L: 50, a: 0, b: 0 };
+    // gameState.targetLab = { L: 50, a: 0, b: 0 };
     gameState.roundActive = false;
     gameState.turnEnded = false;
     gameState.scores = {};
@@ -2080,7 +2100,7 @@ function resetGameState() {
     //meElements.knobL._setValue) gameElements.knobL._setValue(50);
     //if (gameElements.knobA._setValue) gameElements.knobA._setValue(0);
     //if (gameElements.knobB._setValue) gameElements.knobB._setValue(0);
-    gameState.playerLab = { L: 50, a: 0, b: 0 };
+    // gameState.playerLab = { L: 50, a: 0, b: 0 };
 }
 
 async function startGame() {
@@ -2130,7 +2150,7 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function startRound() {
+/* function startRound() {
     gameState.currentRound++;
     gameState.roundActive = true;
     gameState.turnEnded = false;
@@ -2166,6 +2186,43 @@ function startRound() {
     startTimer();
     
     addDebug(`🎮 Ronda ${gameState.currentRound} iniciada - ${gameState.timeRemaining}s`);
+} */ 
+
+function startRound() {
+    gameState.currentRound++;
+    gameState.roundActive = true;
+    gameState.turnEnded = false;
+    gameState.timeRemaining = getRoundDuration(gameState.currentRound);
+    
+    // Update UI
+    gameElements.roundInfo.textContent = `Ronda ${gameState.currentRound} / ${gameState.totalRounds}`;
+    gameElements.endTurnBtn.disabled = false;
+    
+    // Seleccionar la figura correspondiente a esta ronda desde el array precargado
+    if (gameState.room.roundFigures && gameState.room.roundFigures[gameState.currentRound - 1]) {
+        gameState.currentFigure = gameState.room.roundFigures[gameState.currentRound - 1];
+        gameState.targetRgb = gameState.currentFigure.targetColor.rgb;
+        if (gameElements.figureLabel) {
+            gameElements.figureLabel.textContent = gameState.currentFigure.name || 'Figura';
+        }
+    } else {
+        // Fallback de emergencia por si acaso
+        if (gameState.player.isHost && gameState.allFigures.length > 0) {
+            gameState.currentFigure = gameState.allFigures[Math.floor(Math.random() * gameState.allFigures.length)];
+            gameState.targetRgb = gameState.currentFigure.targetColor.rgb;
+        }
+    }
+    
+    // Dibujar la figura en el canvas local de forma instantánea
+    drawFigureWithMask();
+    
+    // Reset player knobs / color
+    // gameState.playerLab = { L: 50, a: 0, b: 0 };
+    
+    // Start timer
+    startTimer();
+    
+    addDebug(`🎮 Ronda ${gameState.currentRound} iniciada al instante - ${gameState.timeRemaining}s`);
 }
 
 function getRoundDuration(roundNum) {
@@ -2498,16 +2555,16 @@ function endRound() {
             gameState.roundResults[gameState.currentRound] = [];
         }
         
-        gameState.room.players.forEach((p, id) => {
-            const alreadySubmitted = gameState.roundResults[gameState.currentRound].some(r => r.playerId === id);
-            if (!alreadySubmitted) {
-                gameState.roundResults[gameState.currentRound].push({
-                    playerId: id,
-                    rgb: { r: 128, g: 128, b: 128 }, // 👈 Cambiar 'lab: { ... }' por 'rgb: { r: 128, g: 128, b: 128 }'
-                    name: p.name || 'Jugador'
-                });
-            }
-        });
+    gameState.room.players.forEach((p, id) => {
+        const alreadySubmitted = gameState.roundResults[gameState.currentRound].some(r => r.playerId === id);
+        if (!alreadySubmitted) {
+            gameState.roundResults[gameState.currentRound].push({
+                playerId: id,
+                rgb: { r: 128, g: 128, b: 128 }, // 👈 Cambiar 'lab' por 'rgb'
+                name: p.name || 'Jugador'
+            });
+        }
+    });
     }
     
     // Calculate scores for all players
@@ -2539,12 +2596,12 @@ function broadcastRoundResults() {
         results: results.map(r => ({
             playerId: r.playerId,
             name: r.name,
-            lab: r.lab,
+            rgb: r.rgb,
             score: r.score,
             baseScore: r.baseScore
         })),
         scores: scoresData,
-        targetLab: gameState.targetLab,
+        // targetLab: gameState.targetLab,
         currentFigure: gameState.currentFigure ? {
             id: gameState.currentFigure.id,
             name: gameState.currentFigure.name,
@@ -2765,14 +2822,11 @@ function handleGameMessage(from, data) {
 function handleFigureData(data) {
     if (data.figure) {
         gameState.currentFigure = data.figure;
-        gameState.targetLab = data.figure.targetColor.lab; // Asegurar que apunte al lab correcto
+        gameState.targetRgb = data.figure.targetColor.rgb; // 👈 Usar targetRgb en lugar de targetLab
         
-        // Actualizar el título/etiqueta con el nombre de la figura para el invitado
         if (gameElements.figureLabel) {
             gameElements.figureLabel.textContent = data.figure.name || 'Figura';
         }
-        
-        // Dibujar la imagen recibida en el canvas del invitado
         drawFigureWithMask();
         addDebug(`🖼️ Figura recibida y cargada: ${data.figure.name}`);
     }
@@ -2789,7 +2843,7 @@ function handleRoundResults(data) {
         gameState.scores[id].roundScores = scoreData.roundScores;
     });
     
-    gameState.targetLab = data.targetLab;
+    // gameState.targetLab = data.targetLab;
     
     // If we have figure data, update current figure
     if (data.currentFigure) {
