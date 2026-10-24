@@ -547,7 +547,7 @@ function handlePeerMessage(from, data) {
     addDebug(`📨 ${from.substring(0,8)}: ${data.type}`);
     
     // Game messages (incluyendo figure-data, round-results y game-results)
-    const gameTypes = ['player-rgb', 'start-round', 'end-round', 'game-ended', 'figure-data', 'round-results', 'game-results'];
+    const gameTypes = ['player-rgb', 'start-round', 'end-round', 'game-ended', 'figure-data', 'round-results', 'game-results', 'prepare-game', 'guest-ready', 'begin-countdown'];
     if (gameTypes.includes(data.type)) {
         handleGameMessage(from, data);
         return;
@@ -1033,23 +1033,85 @@ async function handleStartGame() {
     gameState.room.players.forEach(p => { if (p.confirmed) confirmed++; });
     if (confirmed < 1) return;
     
-    // Asegurar que el host tenga las figuras cargadas
+    // Bloquear el botón visualmente para el host
+    if (elements.startGameBtn) {
+        elements.startGameBtn.disabled = true;
+        elements.startGameBtn.innerHTML = '⏳ Preparando jugadores...';
+    }
+    
     await loadAllFigures();
-    
     precalculateRoundDurations();
-    precalculateRoundFigures(); // <--- Preseleccionar todas las figuras aquí
+    precalculateRoundFigures();
     
-    // Enviar la configuración y TODAS las figuras de la partida de golpe
-    broadcast('start-game', {
+    // 1. El host prepara su propio juego localmente
+    await prepareGameSetup();
+    
+    // 2. Crear una lista de jugadores listos (el host ya lo está)
+    gameState.readyPlayers = new Set();
+    gameState.readyPlayers.add(gameState.player.id);
+    
+    // 3. Ordenar a los invitados que preparen su juego
+    broadcast('prepare-game', {
         config: gameState.room.config,
         roundDurations: gameState.room.roundDurations,
         totalRounds: gameState.room.totalRounds,
         baseDuration: gameState.room.baseDuration,
-        roundFigures: gameState.room.roundFigures // <--- Adjuntar figuras precargadas
+        roundFigures: gameState.room.roundFigures
     });
     
-    addDebug('🚀 Iniciando partida con config y figuras precargadas');
-    startGame();
+    addDebug('🚀 Host listo. Esperando que los invitados carguen...');
+    
+    // 4. Temporizador de respaldo (Si alguien se desconecta cargando, forzar inicio en 10s)
+    gameState.startTimeout = setTimeout(() => {
+        addDebug('⚠️ Timeout esperando jugadores. Forzando inicio global...');
+        broadcast('begin-countdown', {});
+        beginCountdownGlobal();
+    }, 10000);
+    
+    checkAllPlayersReady();
+}
+
+// A. El invitado recibe los datos, prepara la pantalla, y avisa que ya cargó todo
+async function handlePrepareGameSignal(data) {
+    addDebug('🎮 Recibiendo datos y preparando partida localmente...');
+    
+    gameState.room.config = data.config;
+    gameState.room.roundDurations = data.roundDurations;
+    gameState.room.totalRounds = data.totalRounds;
+    gameState.room.baseDuration = data.baseDuration;
+    gameState.room.roundFigures = data.roundFigures;
+    
+    await prepareGameSetup();
+    
+    // Enviar confirmación al host
+    const hostConn = gameState.connections.get(gameState.room.hostId);
+    if (hostConn && hostConn.conn.open) {
+        hostConn.conn.send({ type: 'guest-ready', playerId: gameState.player.id });
+    }
+}
+
+// B. El host registra a cada invitado que terminó de cargar
+function handleGuestReady(data) {
+    if (!gameState.player.isHost) return;
+    if (!gameState.readyPlayers) gameState.readyPlayers = new Set();
+    
+    gameState.readyPlayers.add(data.playerId);
+    addDebug(`✅ Jugador ${data.playerId.substring(0,6)} cargado y listo.`);
+    checkAllPlayersReady();
+}
+
+// C. El host verifica si todos terminaron para dar el banderazo de salida
+function checkAllPlayersReady() {
+    let confirmedPlayers = 0;
+    gameState.room.players.forEach(p => { if (p.confirmed) confirmedPlayers++; });
+    
+    if (gameState.readyPlayers.size >= confirmedPlayers) {
+        if (gameState.startTimeout) clearTimeout(gameState.startTimeout);
+        addDebug('🎯 Todos los jugadores cargados. ¡Iniciando cuenta regresiva!');
+        
+        broadcast('begin-countdown', {});
+        beginCountdownGlobal();
+    }
 }
 
 function handleStartGameSignal(data) {
@@ -2102,8 +2164,8 @@ function resetGameState() {
     //if (gameElements.knobB._setValue) gameElements.knobB._setValue(0);
     // gameState.playerLab = { L: 50, a: 0, b: 0 };
 }
-
-async function startGame() {
+    /*
+    async function startGame() {
     initGameScreen();
     showScreen('game-screen');
     initRgbCube();
@@ -2122,6 +2184,28 @@ async function startGame() {
     
     // Start first round
     startRound();
+} */
+
+    async function prepareGameSetup() {
+    initGameScreen();
+    showScreen('game-screen');
+    initRgbCube();
+    
+    // Cargar las figuras en memoria
+    await loadAllFigures();
+    
+    // Inicializar puntajes
+    gameState.scores = {};
+    gameState.room.players.forEach((p, id) => {
+        gameState.scores[id] = { roundScores: [], total: 0 };
+    });
+}
+
+async function beginCountdownGlobal() {
+    // Iniciar el reloj de 3 a 1 de forma simultánea
+    await runCountdown();
+    // Arrancar la ronda 1
+    startRound();
 }
 
 async function loadAllFigures() {
@@ -2135,10 +2219,10 @@ async function loadAllFigures() {
     addDebug(`🎮 Figuras disponibles: ${gameState.allFigures.length}`);
 }
 
-async function runCountdown() {
+async function runCountdown() {                             //tiempo de gracia
     gameElements.countdownOverlay.classList.remove('hidden');
     
-    for (let i = 5; i >= 1; i--) {
+    for (let i = 3; i >= 1; i--) {
         gameElements.countdownNumber.textContent = i;
         await sleep(1000);
     }
@@ -2427,7 +2511,7 @@ function updateFigureMaskWithCurrentColor() {
 function startTimer() {
     // 1. Destruir cualquier reloj fantasma que haya quedado ejecutándose en segundo plano
     clearInterval(gameState.timerInterval);
-    
+
     updateTimerDisplay();
     
     // Calcular el momento absoluto (en milisegundos) en el que debe terminar la ronda
@@ -2469,7 +2553,8 @@ function handleEndTurn() {
     sendPlayerRgb();
     
     // Calculate score locally for immediate feedback
-    const score = calculateRgbSimilarity(r.rgb, gameState.targetRgb);
+    const score = calculateRgbSimilarity(gameState.playerRgb, gameState.targetRgb);
+    //const score = calculateRgbSimilarity(r.rgb, gameState.targetRgb);
     addDebug(`✅ Turno terminado - Similitud: ${score}%`);
 }
 
@@ -2478,7 +2563,8 @@ function sendPlayerRgb() {
         type: 'player-rgb', // Cambiado de lab a rgb
         playerId: gameState.player.id,
         rgb: gameState.playerRgb, // Enviamos RGB directamente
-        round: gameState.currentRound
+        round: gameState.currentRound,
+        timeRemaining: gameState.timeRemaining // Enviar el tiempo que sobró
     };
     
     if (gameState.player.isHost) {
@@ -2531,6 +2617,7 @@ function handlePlayerRgb(data) {
     const playerData = {
         playerId: data.playerId,
         rgb: data.rgb, // Guardamos rgb
+        timeRemaining: data.timeRemaining, // Guardar el tiempo para usarlo en el cálculo
         name: gameState.room.players.get(data.playerId)?.name || 'Jugador'
     };
 
@@ -2558,6 +2645,7 @@ function endRound() {
     
     // 💡 1. Si el tiempo se agotó y el jugador no había dado a "Terminar turno", enviarlo automáticamente con su valor actual
     if (!gameState.turnEnded) {
+        gameState.timeRemaining = 0;
         gameState.turnEnded = true;
         sendPlayerRgb();
     }
@@ -2573,7 +2661,8 @@ function endRound() {
         if (!alreadySubmitted) {
             gameState.roundResults[gameState.currentRound].push({
                 playerId: id,
-                rgb: { r: 128, g: 128, b: 128 }, // 👈 Cambiar 'lab' por 'rgb'
+                rgb: { r: 128, g: 128, b: 128 },
+                timeRemaining: 0,
                 name: p.name || 'Jugador'
             });
         }
@@ -2674,6 +2763,28 @@ function showRoundResults() {
         const isWinner = index === 0;
         const isCurrentPlayer = r.playerId === gameState.player.id;
         
+        // 👈 NUEVA LÓGICA: Calcular bono y formatear texto
+        const bonus = (r.score || 0) - (r.baseScore || 0);
+        const scoreDisplay = bonus > 0 ? `${r.baseScore} + ${bonus}` : `${r.score}`;
+        
+        const item = document.createElement('div');
+        item.className = `result-item ${isWinner ? 'winner' : ''} ${isCurrentPlayer ? 'current-player' : ''}`;
+        item.innerHTML = `
+            <div class="result-info">
+                <div class="result-avatar">${gameState.room.players.get(r.playerId)?.avatar || '😀'}</div>
+                <span class="result-name">${r.name}${isCurrentPlayer ? ' (Tú)' : ''}</span>
+                ${isWinner ? '<span class="result-badge">👑 Ganador</span>' : ''}
+            </div>
+            <!-- 👈 MODIFICADO: Imprimir scoreDisplay y eliminar el signo % -->
+            <span class="result-score">${scoreDisplay}</span>
+        `;
+        gameElements.resultsList.appendChild(item);
+    });
+
+    /*results.forEach((r, index) => {
+        const isWinner = index === 0;
+        const isCurrentPlayer = r.playerId === gameState.player.id;
+        
         const item = document.createElement('div');
         item.className = `result-item ${isWinner ? 'winner' : ''} ${isCurrentPlayer ? 'current-player' : ''}`;
         item.innerHTML = `
@@ -2685,7 +2796,7 @@ function showRoundResults() {
             <span class="result-score">${r.score}%</span>
         `;
         gameElements.resultsList.appendChild(item);
-    });
+    });*/
     
     // Show totals
     let totalHtml = 'Totales: ';
@@ -2794,6 +2905,15 @@ function cleanupGame() {
 // Handle incoming game messages
 function handleGameMessage(from, data) {
     switch (data.type) {
+        case 'prepare-game':
+            handlePrepareGameSignal(data);
+            break;
+        case 'guest-ready':
+            handleGuestReady(data);
+            break;
+        case 'begin-countdown':
+            beginCountdownGlobal();
+            break;
         case 'player-rgb':
             handlePlayerRgb(data);
             break;
